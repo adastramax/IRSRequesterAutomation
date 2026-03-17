@@ -14,7 +14,7 @@ services:
       QA_REQUEST_TIMEOUT_SECONDS: ${QA_REQUEST_TIMEOUT_SECONDS:-30}
       SITE_MATCH_THRESHOLD: ${SITE_MATCH_THRESHOLD:-80}
     ports:
-      - "8000:8000"
+      - "8001:8000"
     volumes:
       - ./data:/app/data
     healthcheck:
@@ -40,7 +40,7 @@ services:
       QA_REQUEST_TIMEOUT_SECONDS: ${QA_REQUEST_TIMEOUT_SECONDS:-30}
       SITE_MATCH_THRESHOLD: ${SITE_MATCH_THRESHOLD:-80}
     ports:
-      - "8501:8501"
+      - "8520:8501"
     volumes:
       - ./data:/app/data
     depends_on:
