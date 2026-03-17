@@ -1,0 +1,52 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: uvicorn app:app --host 0.0.0.0 --port 8000
+    environment:
+      QA_CONNECT_AUTH_BASE: ${QA_CONNECT_AUTH_BASE:-https://connectapiqas.ad-astrainc.com}
+      QA_CONNECT_API_BASE: ${QA_CONNECT_API_BASE:-https://connectapiqas.ad-astrainc.com}
+      QA_CONNECT_SEARCH_BASE: ${QA_CONNECT_SEARCH_BASE:-https://connectapiqas.ad-astrainc.com}
+      CONNECT_EMAIL: ${CONNECT_EMAIL:-almaskhan@ad-astrainc.com}
+      CONNECT_PASSWORD: ${CONNECT_PASSWORD:-Welcome123!}
+      QA_PRECALL_POLICY: ${QA_PRECALL_POLICY:-19}
+      QA_REQUEST_TIMEOUT_SECONDS: ${QA_REQUEST_TIMEOUT_SECONDS:-30}
+      SITE_MATCH_THRESHOLD: ${SITE_MATCH_THRESHOLD:-80}
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: streamlit run frontend.py --server.address 0.0.0.0 --server.port 8501
+    environment:
+      BACKEND_URL: http://api:8000
+      QA_CONNECT_AUTH_BASE: ${QA_CONNECT_AUTH_BASE:-https://connectapiqas.ad-astrainc.com}
+      QA_CONNECT_API_BASE: ${QA_CONNECT_API_BASE:-https://connectapiqas.ad-astrainc.com}
+      QA_CONNECT_SEARCH_BASE: ${QA_CONNECT_SEARCH_BASE:-https://connectapiqas.ad-astrainc.com}
+      CONNECT_EMAIL: ${CONNECT_EMAIL:-almaskhan@ad-astrainc.com}
+      CONNECT_PASSWORD: ${CONNECT_PASSWORD:-Welcome123!}
+      QA_PRECALL_POLICY: ${QA_PRECALL_POLICY:-19}
+      QA_REQUEST_TIMEOUT_SECONDS: ${QA_REQUEST_TIMEOUT_SECONDS:-30}
+      SITE_MATCH_THRESHOLD: ${SITE_MATCH_THRESHOLD:-80}
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      api:
+        condition: service_healthy
+
+networks:
+  default:
+    name: qa_irs_pin_local
