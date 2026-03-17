@@ -1,0 +1,24 @@
+venv/
+output/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+.env.*
+*.log
+*.tmp
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Local data files
+*.xlsx
+*.xls
+*.csv
+
+# Local/test json
+test.json

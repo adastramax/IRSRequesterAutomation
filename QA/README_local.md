@@ -1,0 +1,267 @@
+# IRS PIN QA Tool
+
+This folder is the QA-integrated version of the IRS PIN tool. It keeps the validated module split from the mock project, but the service layer now calls live QA Connect APIs on `connectapiqas.ad-astrainc.com`.
+
+## Current Architecture
+
+Core files:
+
+- `main.py`: CLI entry point
+- `app.py`: FastAPI wrapper
+- `frontend.py`: Streamlit UI
+- `utils/client.py`: live QA API client
+- `utils/helpers.py`: shared helpers
+- `src/qa_irs_pin/config.py`: QA config, aliases, defaults
+- `src/qa_irs_pin/parser.py`: CSV/XLS/XLSX/manual row parsing
+- `src/qa_irs_pin/matching.py`: fuzzy matching and manual-selection helper logic
+- `src/qa_irs_pin/payloads.py`: Connect `Insert` / `Update` payload builders
+- `src/qa_irs_pin/processor.py`: source-of-truth backend flow
+- `src/qa_irs_pin/registry.py`: local SQLite audit/registry
+- `data/qa_irs_pin.db`: local SQLite audit database
+
+Important:
+
+- `processor.py` is the backend source of truth
+- one processor still drives CLI, FastAPI, and Streamlit
+- `app.py` should stay a thin wrapper over `processor.py`
+
+## Core QA Rules To Preserve
+
+1. Insert vs Update contract
+- `Insert` uses lower-camel browser-style form fields
+- `Update` uses fuller PascalCase-style form fields
+
+2. Verification sources
+- trust `exports/filter`
+- then `GetAccountDetailByID`
+- profile page in Connect QA is tertiary visual confirmation
+- `members/filter` is secondary only
+
+3. New-site first PIN rule
+- if `maxPinCode` exists: `int(maxPinCode) + 1`
+- if `maxPinCode` is null for a new site: `int(f"{teid}00001")`
+
+4. Deactivate is detail-first
+- resolve latest valid requester by SEID
+- fetch `GetAccountDetailByID`
+- build update payload from live detail
+- refuse deactivate if detail cannot be fetched
+
+5. QA aliases are not IRS production truth
+- Markytech / Esided aliases in QA config are QA-only conveniences
+
+## Current Site-Resolution Flow
+
+### If `Site ID` is provided
+
+1. resolve customer/BOD
+2. fetch API 3 address strings for that customer
+3. fuzzy match the input site text against those addresses
+4. if `Manual Site Name` is present, use it directly
+5. otherwise use the best canonical match
+6. manual confirmation is only required when the match is genuinely unsafe
+7. use the provided TEID for API 1 / PIN context / commit
+
+### If `Site ID` is blank
+
+1. resolve customer/BOD
+2. fetch API 3 address strings
+3. decide whether the input looks like:
+- an existing-site reference
+- or a true new-site candidate
+4. existing-site reference:
+- send the matched canonical site string to API 2
+5. new-site candidate:
+- send the original input string to API 2
+6. API 2 is the actual authority for existing vs new TEID
+7. if API 2 says new site:
+- assign `currentMaxTeid + 1`
+
+## Current Matching / Manual Selection Behavior
+
+The current matcher intentionally supports these behaviors:
+
+- safe subset existing-site matches auto-proceed
+- differentiated inputs do not silently collapse to an older site
+- API 2 remains the real final site-existence check
+
+Examples that should auto-proceed:
+
+- `Flat C` -> `Flat 104-C`
+- `House 101` -> `House 101, Al Rehman Villas, street 10, BMCHS, 753`
+
+Examples that should stay on the new-site path when `Site ID` is blank:
+
+- `Jacksonville 2`
+- `Jacksonville ATA`
+- `North River Grove Summit 8, TX, USA`
+
+Manual selection is still required when:
+
+- no candidate is good enough
+- multiple plausible existing candidates are ambiguous
+- the row is not safe to auto-collapse
+
+Important live QA caveat:
+
+- generic inputs can drift as the live Markytech address list grows
+- example: once `Jacksonville 2` and `Jacksonville ATA` exist in QA, a generic input like `Jacksonville` may no longer be deterministic
+- for stable/operator-safe behavior, prefer canonical full site strings or use `Manual Site Name`
+
+## FastAPI Contract
+
+Main frontend endpoints:
+
+- `POST /process/review`
+- `POST /process/commit`
+
+Legacy bulk endpoint:
+
+- `POST /process`
+
+### `/process/review`
+
+Purpose:
+
+- preview site correction, TEID resolution, notes, and suggested payload
+- no Connect mutation
+
+Input:
+
+```json
+{
+  "rows": [
+    {
+      "BOD": "MT",
+      "First Name": "John",
+      "Last Name": "Doe",
+      "SEID": "JD1001",
+      "Site Name": "Jacksonville, FL, USA",
+      "Site ID": "",
+      "Contact Status": "Add",
+      "Manual Site Name": ""
+    }
+  ],
+  "write_output": false,
+  "debug": true
+}
+```
+
+### `/process/commit`
+
+Purpose:
+
+- run the real backend flow in `processor.py`
+- create / deactivate / detect already-exists / manual-selection-required
+
+Current response shape is consistent even when `debug=true`:
+
+- `input`
+- `corrected_data`
+- `api_trace`
+- `connect_payload`
+- `result`
+
+`result` includes:
+
+- `status`
+- `message`
+- `guid`
+- `teid`
+- `pin`
+- `posted_payload_address`
+
+### `/process`
+
+Purpose:
+
+- legacy file/form endpoint
+- still used for bulk CSV/XLS/XLSX upload
+
+## Streamlit Contract
+
+Manual path:
+
+- use `/process/review`
+- then `/process/commit`
+
+Bulk path:
+
+- keep using legacy `/process`
+
+Current UI rules:
+
+- no operator / created-by field in the UI
+- manual entry fields:
+  - `BOD`
+  - `First Name`
+  - `Last Name`
+  - `SEID`
+  - `Site Name`
+  - `Site ID`
+  - `Contact Status`
+  - `Manual Site Name`
+
+## Current Verified Behaviors
+
+Backend/core is verified for:
+
+- existing site with TEID provided
+- existing site with TEID missing
+- true new site with TEID missing
+- direct-site-ID canonical override
+- detail-first deactivate
+- bulk upload through Streamlit legacy `/process`
+- review/commit parity for provided `Site ID` cases
+- payload-address preservation on new-site blank-`Site ID` commits
+- safe-subset auto-match for `Flat C` and `House 101`
+
+Recent live QA bulk proof:
+
+- uploaded `8` rows through Streamlit bulk upload
+- batch file saved under `QA/data/output/`
+- all `8` rows were `Created`
+- proof SEIDs:
+  - `MTQA5501`
+  - `MTQA5502`
+  - `MTQA5503`
+  - `MTQA5504`
+  - `MTQA5505`
+  - `MTQA5506`
+  - `MTQA5507`
+  - `MTQA5508`
+
+True new-site examples now proven in current QA state:
+
+- `North River Grove Summit 8, TX, USA` -> new TEID `9979` -> PIN `997900001`
+- `Jacksonville Building 3C, FL, USA` -> new TEID `9980` -> PIN `998000001`
+
+## Known Caveats
+
+Known bad inconsistent deactivate proof target:
+
+- Markytech / `346EDR24`
+- GUID `fdf752d3-fdf2-4d9d-838f-1f62a47ba8eb`
+
+State:
+
+- earlier bad deactivate attempt left it inconsistent
+- `exports/filter` showed `Active`
+- `GetAccountDetailByID` failed
+- current code correctly refuses detail-less deactivate on such records
+
+Important project caveat:
+
+- QA state changes over time
+- TEIDs, max PINs, and address lists are live and unstable
+- never hardcode old TEID expectations for fresh new-site proofs
+
+## What To Preserve
+
+- thin `app.py`
+- `processor.py` as backend source of truth
+- lower-camel `Insert`
+- detail-first `Update`
+- deterministic PIN logic
+- API 2 as final existing/new-site authority
+- minimal changes over redesign

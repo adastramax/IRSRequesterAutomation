@@ -1,0 +1,8 @@
+requests
+python-dotenv
+fastapi
+openpyxl
+pandas
+python-multipart
+streamlit
+uvicorn
