@@ -49,9 +49,9 @@ Current QA architecture:
   - Add Requester
   - Deactivate Requester
   - Dev Use
-- Add Requester combines bulk upload and manual entry in one workflow
+- Add Requester combines bulk upload and `Manual Entry` in one workflow
 - Deactivate Requester uses the same clean operations-style layout
-- Dev Use remains the raw debug page for internal troubleshooting
+- Dev Use remains the raw debug page for internal troubleshooting, but it is now behind a lightweight frontend sign-in gate in `QA/frontend.py`
 
 Most important QA rules to preserve:
 
@@ -102,9 +102,12 @@ Current frontend contract:
 - bulk upload remains on legacy /process
 - no operator field in the UI
 - normal user screens should not show raw JSON, match scoring, or backend trace details
-- Add Requester should keep bulk upload above manual entry
+- Add Requester should keep bulk upload above `Manual Entry`
+- Add Requester helper copy should stay:
+  - `Upload a file for multiple requesters, or enter one requester below.`
 - Deactivate Requester should keep the same clean button-row workflow as Add Requester
 - Dev Use is the only place where raw responses and debug payloads belong
+- Dev Use should stay relockable from the UI, and its login constants currently live in `QA/frontend.py`
 
 Current commit response contract:
 - per row include:

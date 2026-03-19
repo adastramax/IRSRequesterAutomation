@@ -202,6 +202,11 @@ Current UI rules:
   - `Site ID`
   - `Contact Status`
   - `Manual Site Name`
+- Add Requester keeps bulk upload above a `Manual Entry` expander
+- Add Requester helper copy is:
+  - `Upload a file for multiple requesters, or enter one requester below.`
+- Dev Use is protected by a lightweight frontend sign-in gate before raw/debug tools are shown
+- Dev Use login constants currently live in `QA/frontend.py`
 
 ## QA EC2 Deployment Snapshot
 

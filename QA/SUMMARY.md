@@ -22,9 +22,11 @@ Current Streamlit UX:
   - Dev Use
 - Add Requester supports:
   - bulk upload
-  - manual entry inside one workflow
+  - `Manual Entry` inside one workflow
+- Add Requester helper copy is:
+  - `Upload a file for multiple requesters, or enter one requester below.`
 - Deactivate Requester uses the same clean operations-style layout
-- Dev Use remains the raw/debug page
+- Dev Use remains the raw/debug page, but it is now behind a lightweight frontend sign-in gate in `frontend.py`
 
 ## 2. Current Code Shape
 
@@ -213,9 +215,12 @@ Current frontend state:
 - operator field was removed
 - Add Requester now has a cleaner two-mode workflow:
   - bulk upload at the top
-  - manual entry below it
+  - `Manual Entry` below it
+- Add Requester helper copy now reads:
+  - `Upload a file for multiple requesters, or enter one requester below.`
 - normal user views hide raw JSON, match scoring internals, and debug traces
 - Dev Use still exposes raw review/commit responses and payload detail
+- Dev Use is now gated by a lightweight frontend sign-in screen and relocks on logout
 - Deactivate Requester now follows the same operations-style button pattern as Add Requester
 
 Manual UI fields are now only:
@@ -469,7 +474,7 @@ Current intent:
 - mixed add-case CSVs for bulk upload testing
 - separate deactivate CSV coverage
 - English requester names with unique SEIDs
-- no manual-upload rows in the bulk packs
+- no manual-entry rows in the bulk packs
 
 ## 16. Next-Agent Guidance
 

@@ -25,6 +25,8 @@ from qa_irs_pin.parser import parse_input_bytes, parse_input_records
 
 BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
 DEACT_SITE = "__DEACTIVATE_REQUESTER__"
+DEV_USERNAME = "admin"
+DEV_PASSWORD = "8701Georgia"
 
 
 def ensure_state() -> None:
@@ -62,6 +64,10 @@ def ensure_state() -> None:
         "dev_review": None,
         "dev_commit": None,
         "dev_bulk_result": None,
+        "dev_authenticated": False,
+        "dev_username_input": "",
+        "dev_password_input": "",
+        "dev_login_error": "",
     }
     for key, value in defaults.items():
         st.session_state.setdefault(key, value)
@@ -79,10 +85,12 @@ def inject_styles() -> None:
         [data-testid="stSidebar"] { background:#ffffff; border-right:1px solid #e7ebf3; }
         [data-testid="stSidebar"] .block-container { padding-top:0.2rem; padding-left:0; padding-right:0; }
         .aa-brand,.aa-hero,.aa-card,.stForm,[data-testid="stExpander"]{background:#fff;border:1px solid #e7ebf3;border-radius:18px;box-shadow:0 10px 30px rgba(24,39,75,.05);}
-        .aa-brand{padding:1.1rem 1.2rem .9rem;margin:0 0 1rem;border:none;border-bottom:1px solid #eef2f7;border-radius:0;box-shadow:none}
-        .aa-brand b{display:block;color:#c53d3d;font-size:.78rem;letter-spacing:.12em;text-transform:uppercase}
-        .aa-brand h3{margin:.15rem 0 0;font-size:1.55rem;line-height:1;color:#d93737;font-weight:800}
-        .aa-brand p{margin:.35rem 0 0;color:#6d7a92;font-size:.9rem}
+        .aa-brand{padding:1.1rem 1.2rem 1rem;margin:0 0 1rem;border:none;border-bottom:1px solid #eef2f7;border-radius:0;box-shadow:none}
+        .aa-brand-logo{position:relative;display:inline-block;margin:-.1rem 0 1rem .55rem}
+        .aa-brand-mark{position:relative;display:inline-flex;align-items:flex-end;background:#d83b3b;color:#fff;padding:.78rem 1.08rem .5rem;border-radius:0 4px 4px 0;font-size:2.14rem;line-height:1;font-weight:900;letter-spacing:-.06em;text-transform:lowercase}
+        .aa-brand-mark::before{content:"";position:absolute;top:0;left:-.9rem;border-top:1.26rem solid transparent;border-bottom:1.26rem solid transparent;border-right:.9rem solid #d83b3b}
+        .aa-brand-badge{display:inline-flex;align-items:center;justify-content:center;background:#5a2ca0;color:#fff;border-radius:4px;padding:.24rem .44rem;font-size:.9rem;line-height:1;font-weight:800;letter-spacing:.08em;text-transform:uppercase;position:absolute;top:-.38rem;right:-1.62rem}
+        .aa-brand p{margin:.1rem 0 0;color:#6d7a92;font-size:.96rem}
         .aa-nav-label{padding:0 1.2rem .55rem;color:#a7b1c1;font-size:.8rem;text-transform:uppercase;letter-spacing:.06em}
         .aa-hero{padding:1.25rem 1.35rem;margin-bottom:1rem}.aa-hero small{color:#c53d3d;font-weight:800;letter-spacing:.12em;text-transform:uppercase}.aa-hero h1{margin:.35rem 0 0;font-size:1.9rem;color:#22324a}.aa-hero p{margin:.45rem 0 0;color:#6d7a92;max-width:760px}
         .aa-title{font-size:1.05rem;font-weight:750;margin:1rem 0 .2rem;color:#22324a}.aa-copy{color:#6d7a92;font-size:.93rem;margin-bottom:.8rem}
@@ -135,6 +143,70 @@ def inject_styles() -> None:
         .stTextInput input::placeholder,.stTextArea textarea::placeholder { color:#93a2b5 !important; }
         div[data-baseweb="select"] > div { background:#ffffff !important; color:#22324a !important; border:1px solid #d9e0ea !important; }
         div[data-baseweb="select"] * { color:#22324a !important; }
+        div[data-baseweb="popover"] {
+            background:#ffffff !important;
+            border:none !important;
+            border-radius:14px !important;
+            box-shadow:none !important;
+            outline:none !important;
+        }
+        div[data-baseweb="popover"] > div {
+            background:#ffffff !important;
+            border:1px solid #e7ebf3 !important;
+            border-radius:14px !important;
+            box-shadow:0 16px 36px rgba(24,39,75,.12) !important;
+            outline:none !important;
+        }
+        div[data-baseweb="popover"] div,
+        div[data-baseweb="popover"] ul,
+        div[data-baseweb="popover"] li {
+            background:#ffffff !important;
+        }
+        div[data-baseweb="popover"] [role="listbox"] {
+            background:#ffffff !important;
+            color:#22324a !important;
+            border-radius:14px !important;
+            padding:.35rem !important;
+            box-shadow:none !important;
+            outline:none !important;
+            scrollbar-color:#d9e0ea #ffffff !important;
+            scrollbar-width:thin !important;
+        }
+        div[data-baseweb="popover"] [role="listbox"]::-webkit-scrollbar {
+            width:12px !important;
+            background:#ffffff !important;
+        }
+        div[data-baseweb="popover"] [role="listbox"]::-webkit-scrollbar-track {
+            background:#ffffff !important;
+            border-radius:12px !important;
+        }
+        div[data-baseweb="popover"] [role="listbox"]::-webkit-scrollbar-thumb {
+            background:#d9e0ea !important;
+            border:3px solid #ffffff !important;
+            border-radius:12px !important;
+        }
+        div[data-baseweb="popover"] [role="option"] {
+            background:#ffffff !important;
+            color:#22324a !important;
+            border-radius:8px !important;
+            box-shadow:none !important;
+            outline:none !important;
+        }
+        div[data-baseweb="popover"] [role="option"] * {
+            color:#22324a !important;
+        }
+        div[data-baseweb="popover"] [role="option"][aria-selected="true"] {
+            background:#fbebeb !important;
+            color:#c53d3d !important;
+        }
+        div[data-baseweb="popover"] [role="option"][aria-selected="true"] * {
+            color:#c53d3d !important;
+            font-weight:700 !important;
+        }
+        div[data-baseweb="popover"] [role="option"]:hover {
+            background:#f8f9fc !important;
+            color:#22324a !important;
+        }
         [data-testid="stRadio"] label,
         [data-testid="stRadio"] p,
         [data-testid="stRadio"] span {
@@ -205,6 +277,28 @@ def inject_styles() -> None:
         [data-testid="stExpander"] details {
             background:#ffffff !important;
         }
+        .aa-login-title{margin:0 0 .55rem;font-size:2rem;line-height:1.15;color:#172554;font-weight:800}
+        .aa-login-copy{margin:0 0 1.25rem;color:#6d7a92;font-size:.98rem}
+        .aa-inline-logo{display:inline-flex;align-items:flex-end;gap:.2rem;vertical-align:middle}
+        .aa-inline-logo .aa-brand-mark{font-size:1.6rem;padding:.58rem .88rem .34rem}
+        .aa-inline-logo .aa-brand-mark::before{left:-.7rem;border-top:1rem solid transparent;border-bottom:1rem solid transparent;border-right:.7rem solid #d83b3b}
+        .aa-inline-logo .aa-brand-badge{position:relative;top:-.55rem;right:auto;margin-left:.12rem;font-size:.72rem;padding:.18rem .34rem}
+        .stTextInput div[data-baseweb="input"] button,
+        .stTextInput div[data-baseweb="base-input"] button {
+            background:#fb4a4a !important;
+            color:#ffffff !important;
+            border:none !important;
+            box-shadow:none !important;
+        }
+        .stTextInput div[data-baseweb="input"] button:hover,
+        .stTextInput div[data-baseweb="base-input"] button:hover {
+            background:#ef4040 !important;
+            color:#ffffff !important;
+        }
+        .stTextInput div[data-baseweb="input"] button svg,
+        .stTextInput div[data-baseweb="base-input"] button svg {
+            fill:#ffffff !important;
+        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -212,7 +306,34 @@ def inject_styles() -> None:
 
 
 def render_brand() -> None:
-    st.markdown("<div class='aa-brand'><b>Ad Astra QA</b><h3>adastra</h3><p>IRS PIN operations workspace.</p></div>", unsafe_allow_html=True)
+    st.markdown(
+        """
+        <div class='aa-brand'>
+            <div class='aa-brand-logo'>
+                <span class='aa-brand-mark'>adastra</span>
+                <span class='aa-brand-badge'>QA</span>
+            </div>
+            <p>IRS PIN operations workspace.</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_inline_logo() -> str:
+    return (
+        "<span class='aa-inline-logo'>"
+        "<span class='aa-brand-mark'>adastra</span>"
+        "<span class='aa-brand-badge'>QA</span>"
+        "</span>"
+    )
+
+
+def lock_dev_use() -> None:
+    st.session_state.dev_authenticated = False
+    st.session_state.dev_username_input = ""
+    st.session_state.dev_password_input = ""
+    st.session_state.dev_login_error = ""
 
 
 def hero(title: str, copy: str, eyebrow: str = "Operations") -> None:
@@ -469,7 +590,7 @@ def render_add_requester_page() -> None:
         st.session_state.bulk_uploader_version += 1
         st.session_state.add_reset_requested = False
 
-    hero("Add Requester", "Bulk upload stays at the top. Manual upload is available below in a simple dropdown.")
+    hero("Add Requester", "Upload a file for multiple requesters, or enter one requester below.")
 
     heading("Bulk upload", "Upload the file, review the rows, then upload them to Connect.")
     uploaded = st.file_uploader("Upload CSV or XLSX", type=["csv", "xlsx", "xls"], key=f"add_bulk_uploader_{st.session_state.bulk_uploader_version}")
@@ -478,7 +599,7 @@ def render_add_requester_page() -> None:
         st.session_state.bulk_file_bytes = uploaded.getvalue()
         st.session_state.bulk_file_type = uploaded.type or "application/octet-stream"
 
-    with st.expander("Manual Upload", expanded=False):
+    with st.expander("Manual Entry", expanded=False):
         heading("Manual upload", "Key fields are shown first. Optional fields are clearly marked.")
         st.selectbox("BOD *", bods, index=default_bod, key="add_bod_input")
         c1, c2 = st.columns(2)
@@ -706,7 +827,39 @@ def render_deactivate_requester_page() -> None:
 
 def render_dev_use_page() -> None:
     hero("Dev Use", "Internal debugging workspace with raw review and commit responses, payload details, and legacy output views.", "Internal Only")
-    st.warning("This page exposes raw backend responses and should be used for internal debugging only.")
+    if not st.session_state.dev_authenticated:
+        left, center, right = st.columns([1, 1.55, 1])
+        with center:
+            with st.form("dev_login_form"):
+                st.markdown(
+                    "<h2 class='aa-login-title'>Sign In</h2><p class='aa-login-copy'>Dev Use is locked. Sign in with the admin credentials to continue.</p>",
+                    unsafe_allow_html=True,
+                )
+                st.text_input("Username", key="dev_username_input")
+                st.text_input("Password", type="password", key="dev_password_input")
+                submitted = st.form_submit_button("Sign In", type="primary", use_container_width=True)
+            if submitted:
+                if (
+                    st.session_state.dev_username_input.strip() == DEV_USERNAME
+                    and st.session_state.dev_password_input == DEV_PASSWORD
+                ):
+                    st.session_state.dev_authenticated = True
+                    st.session_state.dev_login_error = ""
+                    st.rerun()
+                else:
+                    st.session_state.dev_login_error = "Invalid username or password."
+            if st.session_state.dev_login_error:
+                st.error(st.session_state.dev_login_error)
+        return
+
+    c1, c2 = st.columns([1, 0.25])
+    with c1:
+        st.warning("This page exposes raw backend responses and should be used for internal debugging only.")
+    with c2:
+        if st.button("Log Out", use_container_width=True, key="dev_logout_button"):
+            lock_dev_use()
+            st.rerun()
+
     st.session_state.dev_mode = st.radio("Input mode", ["Enter Manually", "Attach CSV/XLSX"], horizontal=True, index=0 if st.session_state.dev_mode == "Enter Manually" else 1)
     if st.session_state.dev_mode == "Enter Manually":
         bods = sorted(BOD_LOOKUP.keys())
