@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-import json
+import html
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 import requests
@@ -23,212 +24,780 @@ from qa_irs_pin.models import ParsedRow
 from qa_irs_pin.parser import parse_input_bytes, parse_input_records
 
 BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
+DEACT_SITE = "__DEACTIVATE_REQUESTER__"
 
 
 def ensure_state() -> None:
-    st.session_state.setdefault("manual_request", None)
-    st.session_state.setdefault("manual_review_result", None)
-    st.session_state.setdefault("manual_commit_result", None)
-    st.session_state.setdefault("bulk_run_result", None)
+    defaults = {
+        "page": "Add Requester",
+        "add_request": None,
+        "add_review": None,
+        "add_commit": None,
+        "add_active_workflow": "manual",
+        "add_bod_input": "MARKYTECH",
+        "add_first_name_input": "",
+        "add_last_name_input": "",
+        "add_seid_input": "",
+        "add_site_name_input": "",
+        "add_site_id_input": "",
+        "add_manual_site_name_input": "",
+        "add_reset_requested": False,
+        "bulk_file_name": None,
+        "bulk_file_bytes": None,
+        "bulk_file_type": None,
+        "bulk_preview_rows": [],
+        "bulk_review_result": None,
+        "bulk_result": None,
+        "bulk_uploader_version": 0,
+        "deactivate_request": None,
+        "deactivate_ready": None,
+        "deactivate_commit": None,
+        "deactivate_bod_input": "MARKYTECH",
+        "deactivate_seid_input": "",
+        "deactivate_site_name_input": "",
+        "deactivate_site_id_input": "",
+        "deactivate_reset_requested": False,
+        "dev_mode": "Enter Manually",
+        "dev_request": None,
+        "dev_review": None,
+        "dev_commit": None,
+        "dev_bulk_result": None,
+    }
+    for key, value in defaults.items():
+        st.session_state.setdefault(key, value)
 
 
-def row_to_preview_dict(row: ParsedRow) -> dict:
+def inject_styles() -> None:
+    st.markdown(
+        """
+        <style>
+        .stApp { background:#f7f8fc; color:#22324a; }
+        [data-testid="stHeader"] { background:transparent; height:0rem; }
+        [data-testid="stToolbar"] { display:none; }
+        #MainMenu { visibility:hidden; }
+        header { visibility:hidden; }
+        [data-testid="stSidebar"] { background:#ffffff; border-right:1px solid #e7ebf3; }
+        [data-testid="stSidebar"] .block-container { padding-top:0.2rem; padding-left:0; padding-right:0; }
+        .aa-brand,.aa-hero,.aa-card,.stForm,[data-testid="stExpander"]{background:#fff;border:1px solid #e7ebf3;border-radius:18px;box-shadow:0 10px 30px rgba(24,39,75,.05);}
+        .aa-brand{padding:1.1rem 1.2rem .9rem;margin:0 0 1rem;border:none;border-bottom:1px solid #eef2f7;border-radius:0;box-shadow:none}
+        .aa-brand b{display:block;color:#c53d3d;font-size:.78rem;letter-spacing:.12em;text-transform:uppercase}
+        .aa-brand h3{margin:.15rem 0 0;font-size:1.55rem;line-height:1;color:#d93737;font-weight:800}
+        .aa-brand p{margin:.35rem 0 0;color:#6d7a92;font-size:.9rem}
+        .aa-nav-label{padding:0 1.2rem .55rem;color:#a7b1c1;font-size:.8rem;text-transform:uppercase;letter-spacing:.06em}
+        .aa-hero{padding:1.25rem 1.35rem;margin-bottom:1rem}.aa-hero small{color:#c53d3d;font-weight:800;letter-spacing:.12em;text-transform:uppercase}.aa-hero h1{margin:.35rem 0 0;font-size:1.9rem;color:#22324a}.aa-hero p{margin:.45rem 0 0;color:#6d7a92;max-width:760px}
+        .aa-title{font-size:1.05rem;font-weight:750;margin:1rem 0 .2rem;color:#22324a}.aa-copy{color:#6d7a92;font-size:.93rem;margin-bottom:.8rem}
+        .aa-status{border-radius:16px;padding:1rem;margin:.8rem 0 1rem;border:1px solid #e7ebf3}.aa-status.success{background:#eef9f2;border-color:#cde8d5}.aa-status.warning{background:#fff8e4;border-color:#f1dfa0}.aa-status.error{background:#fdf1f1;border-color:#efcaca}.aa-status.info{background:#fbf1f1;border-color:#ecd3d3}
+        .aa-badge{display:inline-block;border-radius:999px;padding:.35rem .7rem;font-size:.75rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase;background:#fff}
+        .aa-status h3{display:inline-block;margin:0 0 0 .6rem;font-size:1.05rem;color:#22324a}.aa-status p{margin:.7rem 0 0;color:#415069}.aa-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:.65rem;margin-top:.8rem}.aa-item{background:rgba(255,255,255,.88);border:1px solid #e8edf5;border-radius:14px;padding:.75rem .85rem}.aa-item span{display:block;color:#6d7a92;font-size:.74rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em}.aa-item strong{display:block;margin-top:.2rem;font-size:.98rem;color:#22324a;word-break:break-word}
+        .aa-metric{background:#fff;border:1px solid #e7ebf3;border-radius:16px;padding:1rem} .aa-metric span{display:block;color:#6d7a92;font-size:.78rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em} .aa-metric strong{display:block;margin-top:.45rem;font-size:1.95rem;color:#22324a}
+        .aa-table-wrap{background:#ffffff;border:1px solid #e7ebf3;border-radius:16px;overflow:hidden;margin-top:.5rem}
+        .aa-table{width:100%;border-collapse:collapse}
+        .aa-table thead th{background:#fafbfe;color:#7b879c;font-size:.76rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;padding:.9rem .85rem;text-align:left;border-bottom:1px solid #e7ebf3}
+        .aa-table tbody td{background:#ffffff;color:#22324a;padding:.95rem .85rem;border-bottom:1px solid #eef2f7;vertical-align:top}
+        .aa-table tbody tr:last-child td{border-bottom:none}
+        .aa-table .aa-status-pill{display:inline-block;padding:.28rem .65rem;border-radius:999px;font-size:.78rem;font-weight:700}
+        .aa-table .aa-status-created,.aa-table .aa-status-deactivated{background:#eaf8ef;color:#2b8a57}
+        .aa-table .aa-status-active{background:#eaf8ef;color:#2b8a57}
+        .aa-table .aa-status-failed{background:#fdf0f0;color:#c84747}
+        .aa-table .aa-status-warning,.aa-table .aa-status-manual-selection-required,.aa-table .aa-status-already-exists{background:#fff8e4;color:#a97d10}
+        .stForm{padding:1rem 1rem .5rem}.stButton>button,.stDownloadButton>button{border-radius:12px;font-weight:700;min-height:2.7rem}
+        .stButton > button[kind="primary"] {
+            background:#fb4a4a !important;
+            color:#ffffff !important;
+            border:1px solid #fb4a4a !important;
+        }
+        .stButton > button[kind="primary"]:hover {
+            background:#ef4040 !important;
+            color:#ffffff !important;
+            border-color:#ef4040 !important;
+        }
+        .stButton > button[kind="secondary"],
+        .stDownloadButton > button {
+            background:#b8b246 !important;
+            color:#ffffff !important;
+            border:1px solid #b8b246 !important;
+        }
+        .stButton > button[kind="secondary"]:hover,
+        .stDownloadButton > button:hover {
+            background:#a8a23a !important;
+            color:#ffffff !important;
+            border-color:#a8a23a !important;
+        }
+        .stButton > button:disabled,
+        .stDownloadButton > button:disabled {
+            background:#eef1f5 !important;
+            color:#8b98aa !important;
+            border:1px solid #dde4ee !important;
+            opacity:1 !important;
+        }
+        label[data-testid="stWidgetLabel"] p { color:#22324a !important; font-weight:600 !important; }
+        .stTextInput input,.stTextArea textarea { background:#ffffff !important; color:#22324a !important; border:1px solid #d9e0ea !important; }
+        .stTextInput input::placeholder,.stTextArea textarea::placeholder { color:#93a2b5 !important; }
+        div[data-baseweb="select"] > div { background:#ffffff !important; color:#22324a !important; border:1px solid #d9e0ea !important; }
+        div[data-baseweb="select"] * { color:#22324a !important; }
+        [data-testid="stRadio"] label,
+        [data-testid="stRadio"] p,
+        [data-testid="stRadio"] span {
+            color:#22324a !important;
+            opacity:1 !important;
+        }
+        [data-testid="stRadio"] [role="radiogroup"] label {
+            background:transparent !important;
+        }
+        [data-testid="stAlertContainer"] * {
+            color:#22324a !important;
+        }
+        [data-testid="stAlertContainer"] [data-baseweb="notification"] {
+            background:#fff8cf !important;
+            border:1px solid #f0e39a !important;
+        }
+        [data-testid="stSidebar"] .stButton {
+            margin:0 !important;
+        }
+        [data-testid="stSidebar"] .stButton > button {
+            background:#ffffff !important;
+            color:#22324a !important;
+            border:none !important;
+            border-left:4px solid transparent !important;
+            border-radius:0 !important;
+            box-shadow:none !important;
+            justify-content:flex-start !important;
+            padding:0.95rem 1.2rem !important;
+            width:100%;
+            min-height:3.2rem;
+            font-weight:600 !important;
+        }
+        [data-testid="stSidebar"] .stButton > button[kind="primary"] {
+            background:#fbebeb !important;
+            color:#c53d3d !important;
+            border-left:4px solid #d94848 !important;
+        }
+        [data-testid="stSidebar"] .stButton > button:hover {
+            background:#f8f9fc !important;
+            color:#22324a !important;
+        }
+        [data-testid="stSidebar"] .stButton > button[kind="primary"]:hover {
+            background:#f8e5e5 !important;
+            color:#c53d3d !important;
+            border-left:4px solid #d94848 !important;
+        }
+        [data-testid="stFileUploaderDropzone"] {
+            background:#ffffff !important;
+            border:1px dashed #d9e0ea !important;
+            color:#22324a !important;
+        }
+        [data-testid="stFileUploaderDropzone"] * {
+            color:#22324a !important;
+        }
+        [data-testid="stFileUploaderDropzone"] button {
+            background:#f8f8fb !important;
+            color:#c53d3d !important;
+            border:1px solid #eadede !important;
+        }
+        [data-testid="stExpander"] summary {
+            background:#fbfbfd !important;
+            color:#22324a !important;
+            border-radius:12px !important;
+        }
+        [data-testid="stExpander"] summary * {
+            color:#22324a !important;
+        }
+        [data-testid="stExpander"] details {
+            background:#ffffff !important;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_brand() -> None:
+    st.markdown("<div class='aa-brand'><b>Ad Astra QA</b><h3>adastra</h3><p>IRS PIN operations workspace.</p></div>", unsafe_allow_html=True)
+
+
+def hero(title: str, copy: str, eyebrow: str = "Operations") -> None:
+    st.markdown(f"<div class='aa-hero'><small>{html.escape(eyebrow)}</small><h1>{html.escape(title)}</h1><p>{html.escape(copy)}</p></div>", unsafe_allow_html=True)
+
+
+def heading(title: str, copy: str) -> None:
+    st.markdown(f"<div class='aa-title'>{html.escape(title)}</div><div class='aa-copy'>{html.escape(copy)}</div>", unsafe_allow_html=True)
+
+
+def status_card(title: str, message: str, tone: str, fields: list[tuple[str, Any]] | None = None, next_step: str | None = None) -> None:
+    grid = "".join(
+        f"<div class='aa-item'><span>{html.escape(str(k))}</span><strong>{html.escape(str(v))}</strong></div>"
+        for k, v in (fields or [])
+        if v not in (None, "", [])
+    )
+    extra = f"<p><strong>Suggested next action:</strong> {html.escape(next_step)}</p>" if next_step else ""
+    st.markdown(
+        f"<div class='aa-status {tone}'><span class='aa-badge'>{html.escape(title)}</span><h3>{html.escape(title)}</h3><p>{html.escape(message)}</p>{extra}<div class='aa-grid'>{grid}</div></div>",
+        unsafe_allow_html=True,
+    )
+
+
+def metric_cards(cards: list[tuple[str, Any, str]]) -> None:
+    cols = st.columns(len(cards))
+    for col, (label, value, note) in zip(cols, cards):
+        with col:
+            st.markdown(f"<div class='aa-metric'><span>{html.escape(label)}</span><strong>{html.escape(str(value))}</strong><div class='aa-copy'>{html.escape(note)}</div></div>", unsafe_allow_html=True)
+
+
+def first_result(payload: dict[str, Any] | None) -> dict[str, Any]:
+    results = (payload or {}).get("results") or []
+    return results[0] if results else {}
+
+
+def last_note(notes: list[str] | None) -> str:
+    notes = [str(x).strip() for x in (notes or []) if str(x).strip()]
+    return notes[-1] if notes else ""
+
+
+def clean_site(value: Any) -> str:
+    site = str(value or "").strip()
+    return "" if site == DEACT_SITE else site
+
+
+def requester_name(row: dict[str, Any]) -> str:
+    return f"{row.get('First Name', '').strip()} {row.get('Last Name', '').strip()}".strip()
+
+
+def row_to_preview_dict(row: ParsedRow) -> dict[str, Any]:
     payload = row.to_dict()
     payload["notes"] = " | ".join(payload["notes"])
     payload["error_fields"] = ", ".join(payload["error_fields"])
     return payload
 
 
-def render_manual_entry() -> None:
-    bod_options = sorted(BOD_LOOKUP.keys())
-    st.subheader("Manual Entry")
-    with st.form("manual_entry"):
-        bod = st.selectbox("BOD", bod_options, index=bod_options.index("MARKYTECH") if "MARKYTECH" in bod_options else 0)
-        col1, col2 = st.columns(2)
-        with col1:
-            first_name = st.text_input("First Name")
-            seid = st.text_input("SEID")
-            site_id = st.text_input("Site ID (optional)")
-        with col2:
-            last_name = st.text_input("Last Name")
-            site_name = st.text_input("Site Name")
-            contact_status = st.selectbox("Contact Status", ["Add", "Deactivate"])
-        manual_site_name = st.text_input("Manual Site Name")
-        submitted = st.form_submit_button("Review", type="primary")
+def add_row(bod: str, first: str, last: str, seid: str, site_name: str, site_id: str, manual_site_name: str) -> dict[str, str]:
+    return {"BOD": bod, "First Name": first.strip(), "Last Name": last.strip(), "SEID": seid.strip(), "Site Name": site_name.strip(), "Site ID": site_id.strip(), "Contact Status": "Add", "Manual Site Name": manual_site_name.strip()}
 
-    if submitted:
-        request_row = {
-            "BOD": bod,
-            "First Name": first_name,
-            "Last Name": last_name,
-            "SEID": seid,
-            "Site ID": site_id,
-            "Site Name": site_name,
-            "Contact Status": contact_status,
-            "Manual Site Name": manual_site_name,
-        }
-        st.session_state.manual_request = request_row
-        st.session_state.manual_commit_result = None
-        try:
-            st.session_state.manual_review_result = post_review_to_backend(request_row)
-        except requests.RequestException as exc:
-            st.session_state.manual_review_result = None
-            st.error(str(exc))
 
-    if st.session_state.manual_request:
-        rows = parse_input_records([st.session_state.manual_request])
-        st.dataframe(pd.DataFrame([row_to_preview_dict(row) for row in rows]), use_container_width=True, hide_index=True)
-        if st.button("Clear Manual Row", type="secondary"):
-            st.session_state.manual_request = None
-            st.session_state.manual_review_result = None
-            st.session_state.manual_commit_result = None
+def deactivate_row(bod: str, seid: str, site_name: str, site_id: str) -> dict[str, str]:
+    return {"BOD": bod, "First Name": "__DEACTIVATE__", "Last Name": "__REQUESTER__", "SEID": seid.strip(), "Site Name": site_name.strip() or DEACT_SITE, "Site ID": site_id.strip(), "Contact Status": "Deactivate", "Manual Site Name": ""}
+
+
+def post_review(row: dict[str, Any]) -> dict[str, Any]:
+    r = requests.post(f"{BACKEND_URL}/process/review", json={"rows": [row], "write_output": False, "debug": True}, timeout=300)
+    r.raise_for_status()
+    return r.json()
+
+
+def post_bulk_review(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    r = requests.post(f"{BACKEND_URL}/process/review", json={"rows": rows, "write_output": False, "debug": True}, timeout=300)
+    r.raise_for_status()
+    return r.json()
+
+
+def post_commit(payload: dict[str, Any]) -> dict[str, Any]:
+    r = requests.post(f"{BACKEND_URL}/process/commit", json=payload, timeout=300)
+    r.raise_for_status()
+    return r.json()
+
+
+def commit_from_review(review: dict[str, Any], fallback_row: dict[str, Any]) -> dict[str, Any]:
+    row = first_result(review)
+    payload = row.get("suggested_commit_request") or {"rows": [fallback_row], "write_output": False, "debug": False}
+    return post_commit(payload)
+
+
+def post_file(uploaded_file) -> dict[str, Any]:
+    r = requests.post(f"{BACKEND_URL}/process", data={"write_output": "true"}, files={"file": (uploaded_file.name, uploaded_file.getvalue(), uploaded_file.type or "application/octet-stream")}, timeout=300)
+    r.raise_for_status()
+    return r.json()
+
+
+def render_add_review(review: dict[str, Any], row: dict[str, Any]) -> None:
+    r = first_result(review)
+    corrected = r.get("corrected_data") or {}
+    status = str(r.get("status", "")).strip()
+    msg = last_note(r.get("notes")) or "The request could not be reviewed."
+    if status == "Reviewed":
+        msg = " ".join(x for x in [f"Site resolved to {clean_site(corrected.get('corrected_site_name'))}." if clean_site(corrected.get("corrected_site_name")) else "", f"TEID resolved to {corrected.get('resolved_site_id')}." if corrected.get("resolved_site_id") else "", "Review looks ready for commit."] if x)
+        status_card("Ready for review", msg, "info", [("Requester Name", requester_name(row)), ("SEID", row.get("SEID")), ("Site", clean_site(corrected.get("corrected_site_name")) or row.get("Site Name")), ("TEID", corrected.get("resolved_site_id"))], "If the details look correct, select Upload To Connect.")
+    elif status == "Manual Selection Required":
+        status_card("Manual input required", msg or "Manual input is required before processing can continue.", "warning", [("Requester Name", requester_name(row)), ("SEID", row.get("SEID")), ("Site", row.get("Site Name"))], "Provide a more specific Site ID or Manual Site Name, then review again.")
+    else:
+        status_card("Failed", msg, "error", [("Requester Name", requester_name(row)), ("SEID", row.get("SEID"))], "Check the form values and try again.")
+
+
+def render_add_commit(commit: dict[str, Any], row: dict[str, Any]) -> None:
+    c = first_result(commit)
+    corrected = c.get("corrected_data") or {}
+    result = c.get("result") or {}
+    status = str(result.get("status", "")).strip()
+    fields = [("Requester Name", requester_name(row)), ("SEID", row.get("SEID")), ("Site", clean_site(result.get("posted_payload_address")) or clean_site(corrected.get("corrected_site_name")) or row.get("Site Name")), ("TEID", result.get("teid")), ("Generated PIN", result.get("pin"))]
+    message = str(result.get("message", "")).strip() or "The request finished without a detailed message."
+    if status == "Created":
+        status_card("Created successfully", message, "success", fields)
+    elif status in {"Manual Selection Required", "Already Exists"}:
+        warn = "A requester with this SEID already exists for the resolved site." if status == "Already Exists" else message
+        status_card("Manual input required", warn, "warning", fields + [("GUID", result.get("guid"))], "Review the site or SEID details and try again.")
+    else:
+        status_card("Failed", message, "error", fields[:3], "Check the request details or use Dev Use for raw backend output.")
+
+
+def render_bulk_result(result: dict[str, Any], preview_rows: list[ParsedRow]) -> None:
+    summary = result.get("summary") or {}
+    metric_cards([("Total rows", summary.get("total", len(preview_rows)), "Rows received"), ("Created", summary.get("Created", 0), "Requesters created"), ("Failed", summary.get("Failed", 0), "Rows not completed"), ("Manual review required", summary.get("Manual Selection Required", 0), "Needs follow-up")])
+    preview_map = {r.row_number: r for r in preview_rows}
+    rows = []
+    for row in result.get("row_results", []):
+        preview = preview_map.get(row.get("row_number"))
+        rows.append({"SEID": row.get("seid", ""), "Name": f"{preview.first_name} {preview.last_name}".strip() if preview else "", "Status": row.get("status", ""), "Message": str((row.get("response") or {}).get("text", "")).strip() or last_note(row.get("notes")), "Generated PIN": row.get("generated_pin", ""), "TEID": row.get("resolved_site_id", "")})
+    df = pd.DataFrame(rows)
+    heading("Processed results", "Review row-level outcomes without raw logs.")
+    render_clean_results_table(df)
+    if not df.empty:
+        st.download_button("Download processed results", df.to_csv(index=False).encode("utf-8"), "irs_pin_bulk_results.csv", "text/csv")
+
+
+def build_bulk_preview_table(rows: list[ParsedRow]) -> pd.DataFrame:
+    preview_rows: list[dict[str, Any]] = []
+    for row in rows:
+        preview_rows.append(
+            {
+                "BOD": row.bod,
+                "Name": f"{row.first_name} {row.last_name}".strip(),
+                "SEID": row.seid,
+                "Site Name": row.site_name,
+                "Site ID": row.site_id,
+                "Generated PIN": "Will be assigned on upload",
+            }
+        )
+    return pd.DataFrame(preview_rows)
+
+
+def parsed_rows_to_request_rows(rows: list[ParsedRow]) -> list[dict[str, str]]:
+    request_rows: list[dict[str, str]] = []
+    for row in rows:
+        request_rows.append(
+            {
+                "BOD": row.bod,
+                "First Name": row.first_name,
+                "Last Name": row.last_name,
+                "SEID": row.seid,
+                "Site Name": row.site_name,
+                "Site ID": row.site_id,
+                "Contact Status": row.contact_status,
+                "Manual Site Name": row.manual_site_name,
+            }
+        )
+    return request_rows
+
+
+def build_bulk_review_table(review_result: dict[str, Any]) -> pd.DataFrame:
+    rows: list[dict[str, Any]] = []
+    for result in review_result.get("results", []):
+        input_row = result.get("input") or {}
+        corrected = result.get("corrected_data") or {}
+        rows.append(
+            {
+                "BOD": corrected.get("corrected_bod") or input_row.get("BOD", ""),
+                "Name": f"{input_row.get('First Name', '').strip()} {input_row.get('Last Name', '').strip()}".strip(),
+                "SEID": input_row.get("SEID", ""),
+                "Site Name": clean_site(corrected.get("corrected_site_name")) or input_row.get("Site Name", ""),
+                "Site ID": corrected.get("resolved_site_id") or input_row.get("Site ID", ""),
+                "Status": result.get("status", ""),
+                "Generated PIN": "Will be assigned on upload",
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def render_clean_results_table(df: pd.DataFrame) -> None:
+    if df.empty:
+        st.info("No row-level results were returned for this upload.")
+        return
+
+    display_df = df.fillna("")
+    headers = "".join(f"<th>{html.escape(str(column))}</th>" for column in display_df.columns)
+    body_rows: list[str] = []
+    for _, row in display_df.iterrows():
+        cells: list[str] = []
+        for column in display_df.columns:
+            value = row[column]
+            if column == "Status":
+                status_text = str(value)
+                status_class = status_text.strip().lower().replace(" ", "-")
+                cells.append(
+                    f"<td><span class='aa-status-pill aa-status-{html.escape(status_class)}'>{html.escape(status_text)}</span></td>"
+                )
+            else:
+                cells.append(f"<td>{html.escape(str(value))}</td>")
+        body_rows.append(f"<tr>{''.join(cells)}</tr>")
+
+    st.markdown(
+        f"""
+        <div class="aa-table-wrap">
+            <table class="aa-table">
+                <thead>
+                    <tr>{headers}</tr>
+                </thead>
+                <tbody>
+                    {''.join(body_rows)}
+                </tbody>
+            </table>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_add_requester_page() -> None:
+    bods = sorted(BOD_LOOKUP.keys())
+    default_bod = bods.index("MARKYTECH") if "MARKYTECH" in bods else 0
+
+    if st.session_state.add_reset_requested:
+        st.session_state.add_request = None
+        st.session_state.add_review = None
+        st.session_state.add_commit = None
+        st.session_state.add_active_workflow = "manual"
+        st.session_state.add_bod_input = "MARKYTECH" if "MARKYTECH" in bods else bods[0]
+        st.session_state.add_first_name_input = ""
+        st.session_state.add_last_name_input = ""
+        st.session_state.add_seid_input = ""
+        st.session_state.add_site_name_input = ""
+        st.session_state.add_site_id_input = ""
+        st.session_state.add_manual_site_name_input = ""
+        st.session_state.bulk_file_name = None
+        st.session_state.bulk_file_bytes = None
+        st.session_state.bulk_file_type = None
+        st.session_state.bulk_preview_rows = []
+        st.session_state.bulk_review_result = None
+        st.session_state.bulk_result = None
+        st.session_state.bulk_uploader_version += 1
+        st.session_state.add_reset_requested = False
+
+    hero("Add Requester", "Bulk upload stays at the top. Manual upload is available below in a simple dropdown.")
+
+    heading("Bulk upload", "Upload the file, review the rows, then upload them to Connect.")
+    uploaded = st.file_uploader("Upload CSV or XLSX", type=["csv", "xlsx", "xls"], key=f"add_bulk_uploader_{st.session_state.bulk_uploader_version}")
+    if uploaded is not None:
+        st.session_state.bulk_file_name = uploaded.name
+        st.session_state.bulk_file_bytes = uploaded.getvalue()
+        st.session_state.bulk_file_type = uploaded.type or "application/octet-stream"
+
+    with st.expander("Manual Upload", expanded=False):
+        heading("Manual upload", "Key fields are shown first. Optional fields are clearly marked.")
+        st.selectbox("BOD *", bods, index=default_bod, key="add_bod_input")
+        c1, c2 = st.columns(2)
+        with c1:
+            st.text_input("First Name *", key="add_first_name_input")
+            st.text_input("SEID *", help="Must be unique for new requester creation.", key="add_seid_input")
+            st.text_input("Site Name *", key="add_site_name_input")
+        with c2:
+            st.text_input("Last Name *", key="add_last_name_input")
+            st.text_input("Site ID (Optional)", key="add_site_id_input")
+            st.text_input("Manual Site Name (Optional)", key="add_manual_site_name_input")
+        st.caption("Required fields are marked with *")
+        st.caption("Site ID: only provide if the exact site is already known.")
+        st.caption("Manual Site Name: use only when the site name needs to be overridden.")
+
+    manual_row = add_row(
+        st.session_state.add_bod_input,
+        st.session_state.add_first_name_input,
+        st.session_state.add_last_name_input,
+        st.session_state.add_seid_input,
+        st.session_state.add_site_name_input,
+        st.session_state.add_site_id_input,
+        st.session_state.add_manual_site_name_input,
+    )
+    has_bulk_file = st.session_state.bulk_file_bytes is not None
+    has_manual_input = any(
+        manual_row[field].strip()
+        for field in ["First Name", "Last Name", "SEID", "Site Name", "Site ID", "Manual Site Name"]
+    )
+    can_manual_upload = bool(st.session_state.add_request and str(first_result(st.session_state.add_review).get("status", "")) == "Reviewed")
+    active_mode = st.session_state.add_active_workflow
+    if has_manual_input or st.session_state.add_review or st.session_state.add_commit:
+        active_mode = "manual"
+    elif has_bulk_file:
+        active_mode = "bulk"
+
+    result_container = st.container()
+
+    c1, c2, c3 = st.columns([1, 1, 0.8])
+    with c1:
+        if st.button("Review", use_container_width=True, disabled=not (has_bulk_file or has_manual_input), key="add_shared_review"):
+            if active_mode == "bulk" and has_bulk_file:
+                try:
+                    st.session_state.add_active_workflow = "bulk"
+                    with st.spinner("Reviewing uploaded file..."):
+                        parsed_rows = parse_input_bytes(
+                            st.session_state.bulk_file_name,
+                            st.session_state.bulk_file_bytes,
+                        )
+                        st.session_state.bulk_preview_rows = parsed_rows
+                        st.session_state.bulk_review_result = post_bulk_review(parsed_rows_to_request_rows(parsed_rows))
+                        st.session_state.bulk_result = None
+                    st.rerun()
+                except Exception as exc:  # noqa: BLE001
+                    st.session_state.bulk_preview_rows = []
+                    st.session_state.bulk_review_result = None
+                    st.error(f"Could not review the file: {exc}")
+            else:
+                st.session_state.add_active_workflow = "manual"
+                st.session_state.add_request = manual_row
+                st.session_state.add_commit = None
+                st.session_state.bulk_result = None
+                try:
+                    with st.spinner("Reviewing requester..."):
+                        st.session_state.add_review = post_review(st.session_state.add_request)
+                    st.rerun()
+                except requests.RequestException as exc:
+                    st.session_state.add_review = None
+                    st.error(f"Review failed: {exc}")
+    with c2:
+        if st.button(
+            "Upload To Connect",
+            type="primary",
+            use_container_width=True,
+            disabled=(active_mode == "bulk" and st.session_state.bulk_file_bytes is None) or (active_mode == "manual" and not can_manual_upload),
+            key="add_shared_upload",
+        ):
+            if active_mode == "bulk" and has_bulk_file:
+                try:
+                    st.session_state.add_active_workflow = "bulk"
+                    class UploadedFileProxy:
+                        def __init__(self, name: str, data: bytes, file_type: str) -> None:
+                            self.name = name
+                            self._data = data
+                            self.type = file_type
+
+                        def getvalue(self) -> bytes:
+                            return self._data
+
+                    with st.spinner("Uploading file to Connect..."):
+                        proxy = UploadedFileProxy(
+                            st.session_state.bulk_file_name,
+                            st.session_state.bulk_file_bytes,
+                            st.session_state.bulk_file_type,
+                        )
+                        st.session_state.bulk_result = post_file(proxy)
+                    st.rerun()
+                except requests.RequestException as exc:
+                    st.error(f"Bulk processing failed: {exc}")
+            else:
+                try:
+                    st.session_state.add_active_workflow = "manual"
+                    with st.spinner("Uploading requester to Connect..."):
+                        st.session_state.add_commit = commit_from_review(st.session_state.add_review, st.session_state.add_request)
+                    st.rerun()
+                except requests.RequestException as exc:
+                    st.error(f"Commit failed: {exc}")
+    with c3:
+        if st.button("Refresh", use_container_width=True, key="add_shared_refresh"):
+            st.session_state.add_reset_requested = True
             st.rerun()
 
+    with result_container:
+        if st.session_state.bulk_preview_rows:
+            metric_cards([("Rows detected", len(st.session_state.bulk_preview_rows), "Ready for upload")])
+            with st.expander("See reviewed rows", expanded=False):
+                review_df = build_bulk_review_table(st.session_state.bulk_review_result) if st.session_state.bulk_review_result else build_bulk_preview_table(st.session_state.bulk_preview_rows)
+                render_clean_results_table(review_df)
 
-def render_upload_entry() -> tuple[list[ParsedRow], object | None]:
-    st.subheader("Bulk Upload")
-    st.caption("Legacy bulk processing path using /process for CSV/XLS/XLSX uploads.")
-    uploaded = st.file_uploader("Attach a CSV/XLSX/XLS file", type=["csv", "xlsx", "xls"])
-    if uploaded is None:
-        return [], None
+        if st.session_state.bulk_result:
+            render_bulk_result(st.session_state.bulk_result, st.session_state.bulk_preview_rows)
 
-    rows = parse_input_bytes(uploaded.name, uploaded.getvalue())
-    st.dataframe(pd.DataFrame([row_to_preview_dict(row) for row in rows]), use_container_width=True, hide_index=True)
-    return rows, uploaded
+        if st.session_state.add_review and st.session_state.add_request:
+            render_add_review(st.session_state.add_review, st.session_state.add_request)
+
+        if st.session_state.add_commit and st.session_state.add_request:
+            render_add_commit(st.session_state.add_commit, st.session_state.add_request)
 
 
-def post_review_to_backend(row: dict) -> dict:
-    response = requests.post(
-        f"{BACKEND_URL}/process/review",
-        json={"rows": [row], "write_output": False, "debug": True},
-        timeout=300,
+def render_deactivate_requester_page() -> None:
+    bods = sorted(BOD_LOOKUP.keys())
+    default_bod = bods.index("MARKYTECH") if "MARKYTECH" in bods else 0
+
+    if st.session_state.deactivate_reset_requested:
+        st.session_state.deactivate_request = None
+        st.session_state.deactivate_ready = None
+        st.session_state.deactivate_commit = None
+        st.session_state.deactivate_bod_input = "MARKYTECH" if "MARKYTECH" in bods else bods[0]
+        st.session_state.deactivate_seid_input = ""
+        st.session_state.deactivate_site_name_input = ""
+        st.session_state.deactivate_site_id_input = ""
+        st.session_state.deactivate_reset_requested = False
+
+    hero("Deactivate Requester", "Deactivate an existing requester using a focused workflow built for operations users.")
+    heading("Requester details", "Provide the requester identifier and optional site context if you have it.")
+    st.selectbox("BOD *", bods, index=default_bod, key="deactivate_bod_input")
+    st.text_input("SEID *", key="deactivate_seid_input")
+    with st.expander("Optional details"):
+        c1, c2 = st.columns(2)
+        with c1:
+            st.text_input("Site Name (Optional)", key="deactivate_site_name_input")
+        with c2:
+            st.text_input("Site ID (Optional)", key="deactivate_site_id_input")
+
+    request = deactivate_row(
+        st.session_state.deactivate_bod_input,
+        st.session_state.deactivate_seid_input,
+        st.session_state.deactivate_site_name_input,
+        st.session_state.deactivate_site_id_input,
     )
-    response.raise_for_status()
-    return response.json()
-
-
-def post_commit_to_backend(review_result: dict, fallback_row: dict) -> dict:
-    result_row = ((review_result.get("results") or [{}])[0]) if review_result else {}
-    request_payload = result_row.get("suggested_commit_request") or {
-        "rows": [fallback_row],
-        "write_output": False,
-        "debug": False,
+    ready = {
+        "BOD": st.session_state.deactivate_bod_input,
+        "SEID": st.session_state.deactivate_seid_input.strip(),
+        "Site Name": st.session_state.deactivate_site_name_input.strip(),
+        "Site ID": st.session_state.deactivate_site_id_input.strip(),
     }
-    response = requests.post(
-        f"{BACKEND_URL}/process/commit",
-        json=request_payload,
-        timeout=300,
-    )
-    response.raise_for_status()
-    return response.json()
+
+    result_container = st.container()
+    c1, c2, c3 = st.columns([1, 1, 0.8])
+    with c1:
+        if st.button("Review", use_container_width=True, key="deactivate_review_button"):
+            st.session_state.deactivate_request = request
+            st.session_state.deactivate_ready = ready
+            st.session_state.deactivate_commit = None
+            if not ready["BOD"].strip() or not ready["SEID"].strip():
+                st.error("BOD and SEID are required before deactivation can be reviewed.")
+            else:
+                st.rerun()
+    with c2:
+        if st.button("Deactivate", type="primary", use_container_width=True, key="deactivate_commit_button"):
+            st.session_state.deactivate_request = request
+            st.session_state.deactivate_ready = ready
+            try:
+                with st.spinner("Deactivating requester..."):
+                    st.session_state.deactivate_commit = post_commit({"rows": [request], "write_output": False, "debug": False})
+                st.rerun()
+            except requests.RequestException as exc:
+                st.error(f"Deactivation failed: {exc}")
+    with c3:
+        if st.button("Refresh", use_container_width=True, key="deactivate_refresh_button"):
+            st.session_state.deactivate_reset_requested = True
+            st.rerun()
+
+    with result_container:
+        if st.session_state.deactivate_ready:
+            if not st.session_state.deactivate_ready.get("BOD") or not st.session_state.deactivate_ready.get("SEID"):
+                status_card("Failed", "BOD and SEID are required before deactivation can continue.", "error")
+            elif st.session_state.deactivate_commit is None:
+                status_card(
+                    "Ready for review",
+                    "The requester is ready for deactivation. The backend will resolve the active requester by SEID during deactivation.",
+                    "info",
+                    [
+                        ("BOD", st.session_state.deactivate_ready.get("BOD")),
+                        ("SEID", st.session_state.deactivate_ready.get("SEID")),
+                        ("Site Name", st.session_state.deactivate_ready.get("Site Name")),
+                        ("Site ID", st.session_state.deactivate_ready.get("Site ID")),
+                    ],
+                    "Select Deactivate to submit the request.",
+                )
+
+        if st.session_state.deactivate_commit and st.session_state.deactivate_request:
+            row = first_result(st.session_state.deactivate_commit)
+            result = row.get("result") or {}
+            fields = [
+                ("SEID", st.session_state.deactivate_request.get("SEID")),
+                ("Site", clean_site((row.get("corrected_data") or {}).get("corrected_site_name")) or clean_site(st.session_state.deactivate_request.get("Site Name"))),
+                ("GUID / TEID", result.get("guid") or result.get("teid")),
+            ]
+            if str(result.get("status", "")) == "Deactivated":
+                status_card("Deactivated successfully", str(result.get("message", "")).strip() or "Requester deactivated successfully.", "success", fields)
+            else:
+                status_card("Failed", str(result.get("message", "")).strip() or "The requester could not be deactivated.", "error", fields, "Verify the SEID and use Dev Use if you need raw backend details.")
 
 
-def post_file_to_backend(uploaded_file) -> dict:
-    response = requests.post(
-        f"{BACKEND_URL}/process",
-        data={"write_output": "true"},
-        files={"file": (uploaded_file.name, uploaded_file.getvalue(), uploaded_file.type or "application/octet-stream")},
-        timeout=300,
-    )
-    response.raise_for_status()
-    return response.json()
-
-
-def render_manual_review(review_result: dict) -> None:
-    st.subheader("Review")
-    result_row = ((review_result.get("results") or [{}])[0]) if review_result else {}
-    if not result_row:
-        st.info("No review result returned.")
-        return
-    st.json(
-        {
-            "input": result_row.get("input", {}),
-            "corrected_data": result_row.get("corrected_data", {}),
-            "notes": result_row.get("notes", []),
-        },
-        expanded=True,
-    )
-    if result_row.get("api_trace"):
-        st.caption("API Trace")
-        st.json(result_row["api_trace"], expanded=False)
-    if result_row.get("suggested_connect_payload"):
-        st.caption("Suggested Payload")
-        st.json(result_row["suggested_connect_payload"], expanded=False)
-
-
-def render_manual_commit(commit_result: dict) -> None:
-    st.subheader("Commit")
-    result_row = ((commit_result.get("results") or [{}])[0]) if commit_result else {}
-    if not result_row:
-        st.info("No commit result returned.")
-        return
-    st.json(result_row.get("result", {}), expanded=True)
-    if result_row.get("connect_payload"):
-        st.caption("Posted Payload")
-        st.json(result_row["connect_payload"], expanded=False)
-
-
-def render_bulk_results(run_result: dict) -> None:
-    st.subheader("Bulk Results")
-    rows = run_result.get("row_results", [])
-    if rows:
-        result_df = pd.DataFrame(rows)
-        result_df["notes"] = result_df["notes"].apply(lambda values: " | ".join(values))
-        st.dataframe(result_df, use_container_width=True, hide_index=True)
-    st.subheader("Payloads")
-    payloads = run_result.get("payloads", [])
-    if payloads:
-        st.json(payloads, expanded=False)
+def render_dev_use_page() -> None:
+    hero("Dev Use", "Internal debugging workspace with raw review and commit responses, payload details, and legacy output views.", "Internal Only")
+    st.warning("This page exposes raw backend responses and should be used for internal debugging only.")
+    st.session_state.dev_mode = st.radio("Input mode", ["Enter Manually", "Attach CSV/XLSX"], horizontal=True, index=0 if st.session_state.dev_mode == "Enter Manually" else 1)
+    if st.session_state.dev_mode == "Enter Manually":
+        bods = sorted(BOD_LOOKUP.keys())
+        default_bod = bods.index("MARKYTECH") if "MARKYTECH" in bods else 0
+        with st.form("dev_form"):
+            bod = st.selectbox("BOD", bods, index=default_bod)
+            c1, c2 = st.columns(2)
+            with c1:
+                first = st.text_input("First Name")
+                seid = st.text_input("SEID")
+                site_id = st.text_input("Site ID")
+            with c2:
+                last = st.text_input("Last Name")
+                site_name = st.text_input("Site Name")
+                contact_status = st.selectbox("Contact Status", ["Add", "Deactivate"])
+            manual_site_name = st.text_input("Manual Site Name")
+            review = st.form_submit_button("Review", type="primary")
+        if review:
+            st.session_state.dev_request = {"BOD": bod, "First Name": first, "Last Name": last, "SEID": seid, "Site Name": site_name, "Site ID": site_id, "Contact Status": contact_status, "Manual Site Name": manual_site_name}
+            st.session_state.dev_commit = None
+            try:
+                st.session_state.dev_review = post_review(st.session_state.dev_request)
+            except requests.RequestException as exc:
+                st.session_state.dev_review = None
+                st.error(f"Review failed: {exc}")
+        if st.session_state.dev_request:
+            st.dataframe(pd.DataFrame([row_to_preview_dict(r) for r in parse_input_records([st.session_state.dev_request])]), use_container_width=True, hide_index=True)
+        if st.session_state.dev_review is not None:
+            st.subheader("Raw review response")
+            st.json(st.session_state.dev_review, expanded=False)
+            dev_row = first_result(st.session_state.dev_review)
+            if dev_row.get("api_trace"):
+                st.caption("API trace")
+                st.json(dev_row["api_trace"], expanded=False)
+            if dev_row.get("suggested_connect_payload"):
+                st.caption("Suggested payload")
+                st.json(dev_row["suggested_connect_payload"], expanded=False)
+        if st.button("Commit", disabled=not (st.session_state.dev_review and st.session_state.dev_request)):
+            try:
+                st.session_state.dev_commit = commit_from_review(st.session_state.dev_review, st.session_state.dev_request)
+            except requests.RequestException as exc:
+                st.error(f"Commit failed: {exc}")
+        if st.session_state.dev_commit is not None:
+            st.subheader("Raw commit response")
+            st.json(st.session_state.dev_commit, expanded=False)
+            payload = first_result(st.session_state.dev_commit).get("connect_payload")
+            if payload:
+                st.caption("Posted payload")
+                st.json(payload, expanded=False)
     else:
-        st.info("No payloads were posted for this run.")
-    st.json(run_result.get("summary", {}), expanded=True)
-    if run_result.get("output_path"):
-        st.caption(f"Saved batch output to {run_result['output_path']}")
+        uploaded = st.file_uploader("Attach a CSV/XLSX/XLS file", type=["csv", "xlsx", "xls"], key="dev_bulk_upload")
+        rows: list[ParsedRow] = []
+        if uploaded is not None:
+            rows = parse_input_bytes(uploaded.name, uploaded.getvalue())
+            st.dataframe(pd.DataFrame([row_to_preview_dict(r) for r in rows]), use_container_width=True, hide_index=True)
+        if st.button("Process Bulk Upload", type="primary", disabled=uploaded is None):
+            try:
+                st.session_state.dev_bulk_result = post_file(uploaded)
+            except requests.RequestException as exc:
+                st.error(f"Bulk processing failed: {exc}")
+        if st.session_state.dev_bulk_result is not None:
+            st.subheader("Bulk results")
+            st.json(st.session_state.dev_bulk_result, expanded=False)
+
+
+def render_sidebar() -> None:
+    with st.sidebar:
+        render_brand()
+        st.markdown("<div class='aa-nav-label'>Navigation</div>", unsafe_allow_html=True)
+        for page in ["Add Requester", "Deactivate Requester", "Dev Use"]:
+            if st.button(
+                page,
+                key=f"nav_{page}",
+                use_container_width=True,
+                type="primary" if st.session_state.page == page else "secondary",
+            ):
+                st.session_state.page = page
+                st.rerun()
 
 
 def main() -> None:
     st.set_page_config(page_title="IRS PIN QA Tool", layout="wide")
     ensure_state()
-    st.title("IRS PIN QA Tool")
-    st.caption("Review and commit manual rows, or use the legacy bulk upload path for files.")
-
-    with st.sidebar:
-        input_mode = st.radio("Input mode", ["Enter Manually", "Attach CSV/XLSX"])
-
-    uploaded_file = None
-    if input_mode == "Attach CSV/XLSX":
-        rows, uploaded_file = render_upload_entry()
+    inject_styles()
+    render_sidebar()
+    if st.session_state.page == "Add Requester":
+        render_add_requester_page()
+    elif st.session_state.page == "Deactivate Requester":
+        render_deactivate_requester_page()
     else:
-        render_manual_entry()
-        rows = parse_input_records([st.session_state.manual_request]) if st.session_state.manual_request else []
-
-    st.divider()
-    if input_mode == "Attach CSV/XLSX":
-        st.caption(f"{len(rows)} row(s) ready for bulk processing")
-        if st.button("Process Bulk Upload", type="primary", disabled=uploaded_file is None):
-            try:
-                st.session_state.bulk_run_result = post_file_to_backend(uploaded_file)
-            except requests.RequestException as exc:
-                st.error(str(exc))
-
-        if st.session_state.bulk_run_result is not None:
-            render_bulk_results(st.session_state.bulk_run_result)
-    else:
-        if st.session_state.manual_review_result is not None:
-            render_manual_review(st.session_state.manual_review_result)
-
-        can_commit = st.session_state.manual_review_result is not None and st.session_state.manual_request is not None
-        if st.button("Commit", disabled=not can_commit):
-            try:
-                st.session_state.manual_commit_result = post_commit_to_backend(
-                    st.session_state.manual_review_result,
-                    st.session_state.manual_request,
-                )
-            except requests.RequestException as exc:
-                st.error(str(exc))
-
-        if st.session_state.manual_commit_result is not None:
-            render_manual_commit(st.session_state.manual_commit_result)
+        render_dev_use_page()
 
 
 if __name__ == "__main__":

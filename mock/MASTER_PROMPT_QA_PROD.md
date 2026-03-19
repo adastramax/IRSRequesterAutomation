@@ -79,6 +79,27 @@ Production migration target:
 - Keep all environment-specific values configurable
 - Do not hardcode secrets
 
+Current QA deployment snapshot to know before changing deployment behavior:
+- repo: `https://github.com/adastramax/IRSRequesterAutomation`
+- branch currently deployed to QA EC2: `develop`
+- QA EC2 public IP: `44.211.141.130`
+- QA EC2 public DNS: `ec2-44-211-141-130.compute-1.amazonaws.com`
+- QA VM repo path: `/home/ubuntu/IRSRequesterAutomation`
+- QA app path on VM: `/home/ubuntu/IRSRequesterAutomation/QA`
+- deployed with Docker Compose on Ubuntu
+- final shared-VM host port mappings are:
+  - API: `8002:8000`
+  - frontend: `8520:8501`
+- final QA URLs are:
+  - frontend: `http://44.211.141.130:8520`
+  - API: `http://44.211.141.130:8002`
+- these port changes were deployment-only changes
+- do not assume host ports `8000` or `8001` are available on the shared VM
+- deployment pull command used:
+  - `cd /home/ubuntu/IRSRequesterAutomation && git pull origin develop`
+- deployment start command used:
+  - `cd /home/ubuntu/IRSRequesterAutomation/QA && sudo docker compose up -d --build`
+
 Expected implementation order:
 1. Read the PRD and master doc first.
 2. Read the mock code and preserve its structure.
@@ -99,7 +120,7 @@ When you answer or make changes:
 
 If you want a shorter instruction, tell it this:
 
-`Read PRD v7, read mock/MOCK_Project_Summary.md, inspect mock/src/mock_irs_pin/* and mock/streamlit_app.py, then replace the mock service/database lookups with real QA or production Connect/API calls while preserving the validated processor flow and payload shape.`
+`Read PRD v7, read mock/MOCK_Project_Summary.md, inspect mock/src/mock_irs_pin/* and mock/streamlit_app.py, then replace the mock service/database lookups with real QA or production Connect/API calls while preserving the validated processor flow and payload shape. If touching QA deployment, preserve the current EC2 shared-VM host ports unless explicitly asked to change them: API 8002, frontend 8520.`
 
 ## Minimum files it must analyze
 
@@ -119,3 +140,4 @@ If you want a shorter instruction, tell it this:
 - do not replace deterministic PIN generation with random logic
 - do not infer `fK_Location` from guesswork once real API 1 is available
 - do not change the user-facing behavior before matching the current mock output
+- do not casually reset shared-VM QA host ports to `8000` / `8501` without verifying availability

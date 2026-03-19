@@ -1,10 +1,10 @@
 # QA Summary
 
-This file is the compact but complete handoff for the current QA implementation. A new LLM should be able to continue from this document plus `QA/README.md` and `QA/MASTER_LLM_PROMPT_QA.md` without replaying chat history.
+This file is the compact but complete handoff for the current QA implementation. A new LLM should be able to continue from this document plus `QA/README_local.md` and `QA/Maste_Prompt_LLM_QA.md` without replaying chat history.
 
 ## 1. Goal
 
-Port the validated mock IRS PIN workflow into `QA/` while preserving the business flow:
+Preserve and continue the current live QA IRS PIN workflow in `QA/`:
 
 - parse rows
 - resolve customer/BOD
@@ -13,6 +13,18 @@ Port the validated mock IRS PIN workflow into `QA/` while preserving the busines
 - generate deterministic next PIN
 - create or deactivate requesters on live QA
 - keep one processor shared by CLI, FastAPI, and Streamlit
+
+Current Streamlit UX:
+
+- left sidebar pages:
+  - Add Requester
+  - Deactivate Requester
+  - Dev Use
+- Add Requester supports:
+  - bulk upload
+  - manual entry inside one workflow
+- Deactivate Requester uses the same clean operations-style layout
+- Dev Use remains the raw/debug page
 
 ## 2. Current Code Shape
 
@@ -32,10 +44,10 @@ The active QA codebase is:
 - `QA/src/qa_irs_pin/registry.py`
 - `QA/data/qa_irs_pin.db`
 
-Architecture still matches the mock split:
+Architecture currently remains split across parser, matching, payloads, and processor:
 
 - parser, matching, payloads, processor stay separated
-- service layer changed from mock to live QA
+- service layer uses live QA APIs
 - one processor drives CLI, FastAPI, and Streamlit
 - local SQLite is still used for audit / registry
 
@@ -199,6 +211,12 @@ Current frontend state:
 - bulk CSV/XLS/XLSX upload still uses legacy:
   - `POST /process`
 - operator field was removed
+- Add Requester now has a cleaner two-mode workflow:
+  - bulk upload at the top
+  - manual entry below it
+- normal user views hide raw JSON, match scoring internals, and debug traces
+- Dev Use still exposes raw review/commit responses and payload detail
+- Deactivate Requester now follows the same operations-style button pattern as Add Requester
 
 Manual UI fields are now only:
 
@@ -210,6 +228,16 @@ Manual UI fields are now only:
 - `Site ID`
 - `Contact Status`
 - `Manual Site Name`
+
+### Current deactivation UI
+
+Deactivation is now a separate page with the same clean operations pattern:
+
+- `Review`
+- `Deactivate`
+- `Refresh`
+
+Normal users see polished status cards instead of raw logs.
 
 ## 9. Manual-Selection Logic Fix
 
@@ -350,7 +378,76 @@ The active QA DB is now:
 
 - `QA/data/qa_irs_pin.db`
 
-## 14. What To Preserve
+## 14. EC2 Deployment Snapshot
+
+Current QA deployment baseline as of March 18, 2026:
+
+- repo: `https://github.com/adastramax/IRSRequesterAutomation`
+- branch deployed: `develop`
+- VM OS: Ubuntu EC2
+- EC2 public IP: `44.211.141.130`
+- EC2 public DNS: `ec2-44-211-141-130.compute-1.amazonaws.com`
+- SSH user: `ubuntu`
+- working Windows SSH key used: `E:\ad-astra\jahangeer 1.pem`
+- confirmed SSH command:
+  - `ssh -i "E:\ad-astra\jahangeer 1.pem" ubuntu@44.211.141.130`
+
+VM paths:
+
+- repo path on VM: `/home/ubuntu/IRSRequesterAutomation`
+- QA app path on VM: `/home/ubuntu/IRSRequesterAutomation/QA`
+
+Verified on VM:
+
+- Git `2.43.0`
+- Docker `27.5.1`
+- Docker Compose `2.33.0`
+
+Initial `QA/docker-compose.yml` host port mappings were:
+
+- API: `8000:8000`
+- frontend: `8501:8501`
+
+Deployment issues encountered:
+
+- first `docker compose up -d --build` failed because host port `8000` was already allocated
+- second deployment attempt with API host port `8001` also failed because `8001` was already in use
+- VM port check showed:
+  - `8000` occupied by `docker-proxy`
+  - `8001` occupied by `gunicorn`
+  - `8520` not occupied
+
+Final working host port mappings in `QA/docker-compose.yml`:
+
+- API: `8002:8000`
+- frontend: `8520:8501`
+
+Git / deployment flow used:
+
+- changes made locally
+- pushed to GitHub `develop`
+- pulled on VM with:
+  - `cd /home/ubuntu/IRSRequesterAutomation && git pull origin develop`
+- deployed from VM with:
+  - `cd /home/ubuntu/IRSRequesterAutomation/QA && sudo docker compose up -d --build`
+
+Final running state:
+
+- `sudo docker compose ps` showed `qa-api-1` healthy on `0.0.0.0:8002->8000/tcp`
+- `sudo docker compose ps` showed `qa-frontend-1` running on `0.0.0.0:8520->8501/tcp`
+
+Final URLs:
+
+- Streamlit frontend: `http://44.211.141.130:8520`
+- API: `http://44.211.141.130:8002`
+
+Important deployment constraints preserved:
+
+- no app redesign
+- no QA logic changes
+- only deployment-level port mapping changes in `QA/docker-compose.yml`
+
+## 15. What To Preserve
 
 - thin wrapper `app.py`
 - `processor.py` as source of truth
@@ -361,14 +458,26 @@ The active QA DB is now:
 - frontend manual review -> commit split
 - legacy `/process` bulk upload path
 - minimal changes over redesign
+- clean Streamlit operations UI with Add Requester, Deactivate Requester, and Dev Use pages
 
-## 15. Next-Agent Guidance
+## 17. Current Streamlit Testing Inputs
+
+Bulk QA inputs live under the repo-level `input/` folder.
+
+Current intent:
+
+- mixed add-case CSVs for bulk upload testing
+- separate deactivate CSV coverage
+- English requester names with unique SEIDs
+- no manual-upload rows in the bulk packs
+
+## 16. Next-Agent Guidance
 
 When continuing from here:
 
-- read `QA/README.md`
+- read `QA/README_local.md`
 - read this file
-- read `QA/MASTER_LLM_PROMPT_QA.md`
+- read `QA/Maste_Prompt_LLM_QA.md`
 - inspect `processor.py`, `matching.py`, `app.py`, and `frontend.py`
 
 When changing behavior:
@@ -377,3 +486,6 @@ When changing behavior:
 - use fresh SEIDs for create tests
 - do not assume historical TEIDs still represent current QA state
 - use absolute current outputs and dates in explanations
+- preserve the current shared-VM host port mappings unless explicitly changed by the team:
+  - API host port `8002`
+  - frontend host port `8520`

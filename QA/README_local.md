@@ -1,6 +1,6 @@
 # IRS PIN QA Tool
 
-This folder is the QA-integrated version of the IRS PIN tool. It keeps the validated module split from the mock project, but the service layer now calls live QA Connect APIs on `connectapiqas.ad-astrainc.com`.
+This folder is the live QA version of the IRS PIN tool. The QA code in this folder is the current source of truth for QA behavior and it calls live QA Connect APIs on `connectapiqas.ad-astrainc.com`.
 
 ## Current Architecture
 
@@ -24,6 +24,7 @@ Important:
 - `processor.py` is the backend source of truth
 - one processor still drives CLI, FastAPI, and Streamlit
 - `app.py` should stay a thin wrapper over `processor.py`
+- use this file together with `QA/SUMMARY.md` and `QA/Maste_Prompt_LLM_QA.md` for QA handoff
 
 ## Core QA Rules To Preserve
 
@@ -201,6 +202,78 @@ Current UI rules:
   - `Site ID`
   - `Contact Status`
   - `Manual Site Name`
+
+## QA EC2 Deployment Snapshot
+
+Current deployment baseline as of March 18, 2026:
+
+- repo: `https://github.com/adastramax/IRSRequesterAutomation`
+- branch: `develop`
+- VM OS: Ubuntu EC2
+- EC2 public IP: `44.211.141.130`
+- EC2 public DNS: `ec2-44-211-141-130.compute-1.amazonaws.com`
+- SSH user: `ubuntu`
+- working Windows SSH key used: `E:\ad-astra\jahangeer 1.pem`
+- confirmed SSH command:
+  - `ssh -i "E:\ad-astra\jahangeer 1.pem" ubuntu@44.211.141.130`
+
+VM paths:
+
+- repo path on VM: `/home/ubuntu/IRSRequesterAutomation`
+- QA app path on VM: `/home/ubuntu/IRSRequesterAutomation/QA`
+
+Verified on VM:
+
+- Git `2.43.0`
+- Docker `27.5.1`
+- Docker Compose `2.33.0`
+
+Deployment flow used:
+
+- make deployment changes locally
+- push to GitHub `develop`
+- pull on VM with:
+  - `cd /home/ubuntu/IRSRequesterAutomation && git pull origin develop`
+- deploy on VM with:
+  - `cd /home/ubuntu/IRSRequesterAutomation/QA && sudo docker compose up -d --build`
+
+Deployment issue encountered on shared VM:
+
+- original API host port `8000` was already allocated
+- second attempt with API host port `8001` also failed because `8001` was already in use
+- VM port check showed:
+  - `8000` occupied by `docker-proxy`
+  - `8001` occupied by `gunicorn`
+  - `8520` free
+
+Final working host port mappings in `QA/docker-compose.yml`:
+
+- API: `8002:8000`
+- frontend: `8520:8501`
+
+Final running state on VM:
+
+- `qa-api-1` healthy on `0.0.0.0:8002->8000/tcp`
+- `qa-frontend-1` running on `0.0.0.0:8520->8501/tcp`
+
+Final URLs:
+
+- Streamlit frontend: `http://44.211.141.130:8520`
+- API: `http://44.211.141.130:8002`
+
+Important deployment constraint preserved:
+
+- no app redesign
+- no QA logic changes
+- only deployment-level port mapping changes in `QA/docker-compose.yml`
+
+## QA Handoff Set
+
+If another LLM needs to continue QA work, give it these three files first:
+
+- `QA/README_local.md`
+- `QA/SUMMARY.md`
+- `QA/Maste_Prompt_LLM_QA.md`
 
 ## Current Verified Behaviors
 
