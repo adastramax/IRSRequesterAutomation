@@ -53,6 +53,10 @@ Current QA architecture:
 - Add Requester combines bulk upload and `Manual Entry` in one workflow
 - Deactivate Requester uses the same clean operations-style layout
 - Dev Use remains the raw debug page for internal troubleshooting, but it is now behind a lightweight frontend sign-in gate in `QA/frontend.py`
+- current practical QA test customers are:
+  - `Esided`
+  - `Almas Test Company`
+  - `FedEx Capital District`
 
 Most important QA rules to preserve:
 
@@ -71,6 +75,8 @@ Most important QA rules to preserve:
 - if maxPinCode is null for a new site:
   - default/non-Esided accounts use 9-digit-total new-site PIN logic
   - Esided keeps its working account-specific first-PIN format
+  - do not allow new-site TEID assignment past `9999`
+  - if next TEID would be `10000` or higher, fail safely instead of assigning it
 
 4. Deactivate is detail-first
 - resolve requester by SEID
@@ -108,6 +114,7 @@ Current frontend contract:
 - Add Requester should keep bulk upload above `Manual Entry`
 - Add Requester helper copy should stay:
   - `Upload a file for multiple requesters, or enter one requester below.`
+- Add manual-entry label should stay clear that `Manual Site Name` is only for manual-selection cases
 - Deactivate Requester should keep the same clean button-row workflow as Add Requester
 - Deactivate Requester supports bulk CSV/XLS/XLSX upload through `/process/commit`
 - Add user-visible reviewed/results/export tables include `GENERATED PIN`
@@ -158,6 +165,7 @@ Current verified behaviors to remember:
 - existing site with TEID provided
 - existing site with TEID missing
 - true new site with TEID missing
+- safe failure when a new-site TEID would exceed the 4-digit `9999` limit
 - direct-site-ID canonical override
 - detail-first deactivate
 - bulk upload through Streamlit legacy /process
@@ -171,8 +179,25 @@ Current verified behaviors to remember:
 - safe-subset auto-match for Flat C and House 101
 - differentiated Jacksonville variants remain differentiated
 - Esided new-site first PIN remains account-specific because the universal non-Esided version failed live
-- current live QA already has active PIN history on Markytech TEID 10000, so recent 10000 proofs are maxPinCode+1 rather than first-ever empty-TEID proofs
 - local audit DB keeps recent history only and prunes older audit data automatically
+
+Latest live proof snapshot on March 27, 2026:
+- manual add passed for:
+  - `Esided`
+  - `Almas Test Company`
+  - `FedEx Capital District`
+- bulk add passed for:
+  - `Esided`
+  - `Almas Test Company`
+  - `FedEx Capital District`
+- manual deactivate passed
+- bulk deactivate passed
+- current tested aliases include:
+  - `ES`
+  - `ATC`
+  - `FEDX`
+  - `FCD`
+- current Esided live state has `currentMaxTeid = 9999`, so true new-site Esided adds now intentionally fail at the TEID guard
 
 Known bad record:
 - SEID: 346EDR24
@@ -202,4 +227,4 @@ What not to do:
 
 Give another LLM this instruction:
 
-`Read QA/README_local.md, QA/SUMMARY.md, and QA/Maste_Prompt_LLM_QA.md first. Treat QA/src/qa_irs_pin/processor.py as the backend source of truth, preserve the review -> commit manual flow and legacy bulk /process flow, preserve Insert/Update payload contracts, and preserve the current EC2 deployment shape on ports 8002 and 8520 unless explicitly asked to change deployment.`
+`Read QA/README_local.md, QA/SUMMARY.md, and QA/Maste_Prompt_LLM_QA.md first. Treat QA/src/qa_irs_pin/processor.py as the backend source of truth, preserve the review -> commit manual flow and legacy bulk /process flow, preserve Insert/Update payload contracts, preserve the 4-digit TEID guard at 9999, and preserve the current EC2 deployment shape on ports 8002 and 8520 unless explicitly asked to change deployment.`

@@ -45,6 +45,8 @@ Important:
   - default/non-Esided accounts use 9-digit-total new-site PIN logic
   - `Esided` uses its working account-specific suffix-width rule
   - for current live QA, `Esided` first new-site PIN remains `TEID + 0001`
+- new-site TEIDs must remain 4 digits
+- if the next new-site TEID would exceed `9999`, the app must fail safely and must not assign `10000`
 
 4. Deactivate is detail-first
 - resolve latest valid requester by SEID
@@ -53,7 +55,11 @@ Important:
 - refuse deactivate if detail cannot be fetched
 
 5. QA aliases are not IRS production truth
-- Markytech / Esided aliases in QA config are QA-only conveniences
+- QA aliases in config are QA-only conveniences
+- current active QA test aliases include:
+  - `ES` -> `Esided`
+  - `ATC` / `ALMAS` -> `Almas Test Company`
+  - `FEDX` / `FCD` -> `FedEx Capital District`
 
 ## Current Site-Resolution Flow
 
@@ -219,6 +225,7 @@ Current UI rules:
   - `Site ID`
   - `Contact Status`
   - `Manual Site Name`
+- Add manual entry label now clarifies that `Manual Site Name` is only for manual-selection-required cases
 - Add Requester keeps bulk upload above a `Manual Entry` expander
 - Add Requester helper copy is:
   - `Upload a file for multiple requesters, or enter one requester below.`
@@ -310,6 +317,7 @@ Backend/core is verified for:
 - existing site with TEID provided
 - existing site with TEID missing
 - true new site with TEID missing
+- safe failure when a new-site TEID would exceed `9999`
 - direct-site-ID canonical override
 - detail-first deactivate
 - bulk upload through Streamlit legacy `/process`
@@ -320,6 +328,33 @@ Backend/core is verified for:
 - same-run TEID reuse for repeated same new site
 - review/commit TEID parity for same-run new-site preview
 - deactivate bulk CSV/XLS/XLSX handling
+
+Latest live QA verification on March 27, 2026:
+
+- manual add passed for:
+  - `Esided`
+  - `Almas Test Company`
+  - `FedEx Capital District`
+- bulk add passed for:
+  - `Esided`
+  - `Almas Test Company`
+  - `FedEx Capital District`
+- manual deactivate passed
+- bulk deactivate passed
+- current live existing-site TEIDs used in the latest proof run:
+  - `Esided` -> `9963`
+  - `Almas Test Company` -> `7583`
+  - `FedEx Capital District` -> `5872`
+- latest live create/deactivate proof run:
+  - `ESL0327021919` -> Created -> GUID `de275244-8805-4d48-8bfe-c0a8a5a5bca7` -> TEID `9963` -> PIN `99636404` -> later Deactivated
+  - `ATL0327021919` -> Created -> GUID `0c265865-2d04-465c-b23a-bc01acbb7810` -> TEID `9922` -> PIN `992200001` -> later Deactivated
+  - `FDL0327021919` -> Created -> GUID `3d855d81-1362-4d37-9c8f-ea65a0c59ecf` -> TEID `7396` -> PIN `739600001` -> later Deactivated
+  - `ESB0327021919` -> bulk Created -> GUID `a37e92a3-9938-4b05-bbd3-cf2d90d8cdf4` -> TEID `9963` -> PIN `99636405` -> later Deactivated
+  - `ATB0327021919` -> bulk Created -> GUID `4584263f-19cc-4f89-a398-0a99e422807e` -> TEID `7583` -> PIN `75833757` -> later Deactivated
+  - `FDB0327021919` -> bulk Created -> GUID `169cc964-b8ed-48e8-8c42-ed635631ae22` -> TEID `5872` -> PIN `58722156` -> later Deactivated
+- current Esided live new-site guard proof:
+  - review for `ESN0327021648` failed with `Cannot assign a new TEID because the 4-digit TEID limit of 9999 has been reached.`
+  - commit for the same case returned row status `Failed` with the same message
 
 Recent live QA bulk proof:
 
@@ -342,8 +377,8 @@ True new-site examples now proven in current QA state:
 - `Jacksonville Building 3C, FL, USA` -> new TEID `9980` -> PIN `998000001`
 - `Idaho library 2nd room` / `Esided` -> new TEID `9989` -> first PIN `99890001` -> next created proof `yyyy12345` with PIN `99890002`
 - `Esided Fixback Site 26 Mar 2026 B` / `Esided` -> new TEID `9997` -> first PIN `99970001`
-- `Markytech Hybrid Site 26 Mar 2026 C, TX, USA` / `Markytech` -> TEID `10000` -> created with PIN `1000000030`
-- important caveat: current live QA already has active PIN history on TEID `10000`, so recent Markytech `10000` proofs are `maxPinCode + 1`, not first-ever new-site-first-PIN proofs
+- `Codex ATC New Site 0327021648` / `Almas Test Company` -> new TEID `9920` -> PIN `992000001`
+- `Codex FCD New Site 0327021648` / `FedEx Capital District` -> new TEID `7395` -> PIN `739500001`
 
 ## Known Caveats
 
@@ -375,6 +410,9 @@ Important project caveat:
 - hybrid new-site first PIN logic:
   - default/non-Esided accounts use 9-digit-total new-site PIN logic
   - `Esided` keeps its working account-specific first-PIN format
+- 4-digit TEID guard:
+  - never assign a new-site TEID above `9999`
+  - fail safely instead
 - API 2 as final existing/new-site authority
 - minimal changes over redesign
 - local SQLite audit/registry is supporting state only, not live QA business truth

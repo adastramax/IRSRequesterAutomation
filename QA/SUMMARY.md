@@ -25,6 +25,7 @@ Current Streamlit UX:
   - `Manual Entry` inside one workflow
 - Add Requester helper copy is:
   - `Upload a file for multiple requesters, or enter one requester below.`
+- Add manual entry now labels `Manual Site Name` clearly as a field for manual-selection-required cases
 - Deactivate Requester uses the same clean operations-style layout
 - Deactivate Requester supports bulk CSV/XLS/XLSX upload
 - Dev Use remains the raw/debug page, but it is now behind a lightweight frontend sign-in gate in `frontend.py`
@@ -85,6 +86,8 @@ Trust in this order:
 - if `maxPinCode` is null for a new site:
   - default/non-Esided accounts use 9-digit-total new-site PIN logic
   - `Esided` keeps its working account-specific first-PIN format
+- new-site TEIDs must stay 4 digits
+- if the next new-site TEID would be greater than `9999`, the app now fails safely instead of assigning it
 
 ### Deactivate rule
 
@@ -92,6 +95,20 @@ Trust in this order:
 - fetch live `GetAccountDetailByID`
 - build `Update` payload from live detail
 - refuse deactivate if detail cannot be fetched
+
+### Current practical QA test customers
+
+- `Esided`
+- `Almas Test Company`
+- `FedEx Capital District`
+
+Current aliases in config include:
+
+- `ES`
+- `ATC`
+- `ALMAS`
+- `FEDX`
+- `FCD`
 
 ## 4. Live QA Proof Baseline
 
@@ -418,6 +435,63 @@ Important caveat:
 - so recent `Markytech` TEID `10000` proofs are `maxPinCode + 1`
 - they are not proof of a first-ever empty-TEID first-PIN case
 
+### March 27, 2026 live regression pass
+
+Fresh live test run across the current practical QA test customers:
+
+- manual add passed for `Esided`, `Almas Test Company`, and `FedEx Capital District`
+- bulk add passed for `Esided`, `Almas Test Company`, and `FedEx Capital District`
+- manual deactivate passed
+- bulk deactivate passed
+
+Fresh create/deactivate proofs:
+
+- manual create:
+  - `ESL0327021919`
+    - GUID `de275244-8805-4d48-8bfe-c0a8a5a5bca7`
+    - TEID `9963`
+    - PIN `99636404`
+    - later Deactivated
+  - `ATL0327021919`
+    - GUID `0c265865-2d04-465c-b23a-bc01acbb7810`
+    - TEID `9922`
+    - PIN `992200001`
+    - later Deactivated
+  - `FDL0327021919`
+    - GUID `3d855d81-1362-4d37-9c8f-ea65a0c59ecf`
+    - TEID `7396`
+    - PIN `739600001`
+    - later Deactivated
+- bulk create:
+  - `ESB0327021919`
+    - GUID `a37e92a3-9938-4b05-bbd3-cf2d90d8cdf4`
+    - TEID `9963`
+    - PIN `99636405`
+    - later Deactivated
+  - `ATB0327021919`
+    - GUID `4584263f-19cc-4f89-a398-0a99e422807e`
+    - TEID `7583`
+    - PIN `75833757`
+    - later Deactivated
+  - `FDB0327021919`
+    - GUID `169cc964-b8ed-48e8-8c42-ed635631ae22`
+    - TEID `5872`
+    - PIN `58722156`
+    - later Deactivated
+
+Current existing-site TEIDs used in that live run:
+
+- `Esided` -> `9963`
+- `Almas Test Company` -> `7583`
+- `FedEx Capital District` -> `5872`
+
+Current 4-digit TEID guard proof:
+
+- `Esided` currently returns `currentMaxTeid = 9999` for a fresh new-site probe
+- review for `ESN0327021648` failed with:
+  - `Cannot assign a new TEID because the 4-digit TEID limit of 9999 has been reached.`
+- commit for the same row returned row status `Failed` with the same message
+
 ## 12. Current FastAPI Surface
 
 Routes currently present in `QA/app.py`:
@@ -534,6 +608,9 @@ Important deployment constraints preserved:
 - hybrid new-site first-PIN logic:
   - default/non-Esided accounts use 9-digit-total new-site PIN logic
   - `Esided` keeps its working account-specific first-PIN format
+- 4-digit TEID guard:
+  - never assign a new-site TEID above `9999`
+  - fail safely instead
 - API 2 as final existing/new-site authority
 - frontend manual review -> commit split
 - legacy `/process` bulk upload path
