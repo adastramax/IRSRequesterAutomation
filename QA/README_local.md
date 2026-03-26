@@ -41,7 +41,10 @@ Important:
 
 3. New-site first PIN rule
 - if `maxPinCode` exists: `int(maxPinCode) + 1`
-- if `maxPinCode` is null for a new site: `int(f"{teid}00001")`
+- if `maxPinCode` is null for a new site:
+  - default/non-Esided accounts use 9-digit-total new-site PIN logic
+  - `Esided` uses its working account-specific suffix-width rule
+  - for current live QA, `Esided` first new-site PIN remains `TEID + 0001`
 
 4. Deactivate is detail-first
 - resolve latest valid requester by SEID
@@ -220,6 +223,7 @@ Current UI rules:
 - Add Requester helper copy is:
   - `Upload a file for multiple requesters, or enter one requester below.`
 - processed results show full client name like `Markytech` in `BOD`
+- manual entry review/processed cards also show the resolved full `BOD`
 - Dev Use is protected by a lightweight frontend sign-in gate before raw/debug tools are shown
 - Dev Use login constants currently live in `QA/frontend.py`
 - Add user-visible reviewed/results/export tables include `GENERATED PIN`
@@ -336,6 +340,10 @@ True new-site examples now proven in current QA state:
 
 - `North River Grove Summit 8, TX, USA` -> new TEID `9979` -> PIN `997900001`
 - `Jacksonville Building 3C, FL, USA` -> new TEID `9980` -> PIN `998000001`
+- `Idaho library 2nd room` / `Esided` -> new TEID `9989` -> first PIN `99890001` -> next created proof `yyyy12345` with PIN `99890002`
+- `Esided Fixback Site 26 Mar 2026 B` / `Esided` -> new TEID `9997` -> first PIN `99970001`
+- `Markytech Hybrid Site 26 Mar 2026 C, TX, USA` / `Markytech` -> TEID `10000` -> created with PIN `1000000030`
+- important caveat: current live QA already has active PIN history on TEID `10000`, so recent Markytech `10000` proofs are `maxPinCode + 1`, not first-ever new-site-first-PIN proofs
 
 ## Known Caveats
 
@@ -364,6 +372,9 @@ Important project caveat:
 - lower-camel `Insert`
 - detail-first `Update`
 - deterministic PIN logic
+- hybrid new-site first PIN logic:
+  - default/non-Esided accounts use 9-digit-total new-site PIN logic
+  - `Esided` keeps its working account-specific first-PIN format
 - API 2 as final existing/new-site authority
 - minimal changes over redesign
 - local SQLite audit/registry is supporting state only, not live QA business truth

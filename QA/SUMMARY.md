@@ -82,7 +82,9 @@ Trust in this order:
 ### New-site first PIN rule
 
 - if `maxPinCode` exists: `int(maxPinCode) + 1`
-- if `maxPinCode` is null for a new site: `int(f"{teid}00001")`
+- if `maxPinCode` is null for a new site:
+  - default/non-Esided accounts use 9-digit-total new-site PIN logic
+  - `Esided` keeps its working account-specific first-PIN format
 
 ### Deactivate rule
 
@@ -210,6 +212,10 @@ Current per-row commit response always includes:
 - review and commit now match for same-run new-site TEID assignment
 - same-run allocator applies only within one request/run
 - cross-run starting TEID still comes from live API 2 `currentMaxTeid`
+- helper fallback no longer hardcodes `f"{teid}00001"` in `next_pin(...)`
+- current hybrid rule is:
+  - default/non-Esided accounts use 9-digit-total new-site PIN logic
+  - `Esided` uses account-specific first-PIN formatting because the universal version failed live
 
 ## 8. Frontend Contract Fix
 
@@ -237,6 +243,7 @@ Current frontend state:
 - Dev Use is now gated by a lightweight frontend sign-in screen and relocks on logout
 - Deactivate Requester now follows the same operations-style button pattern as Add Requester
 - processed results now show full client name like `Markytech` in `BOD`
+- manual entry review/processed cards now also show the resolved full `BOD`
 
 Manual UI fields are now only:
 
@@ -379,6 +386,38 @@ Notable results:
   - PIN `998000001`
   - `addresses_after.site_present = true`
 
+### Esided new-site first-PIN proof
+
+Fresh/live proof after the suffix-width fix:
+
+- `Idaho library 2nd room` under `Esided` resolved to new TEID `9989`
+- hardcoded `998900001` failed with `Pin Code Setup Failed`
+- same TEID `9989` succeeded with first PIN `99890001`
+- fresh manual-entry proof:
+  - SEID `yyyy12345`
+  - TEID `9989`
+  - PIN `99890002`
+  - status `Created`
+
+### Current hybrid live proofs
+
+- `Markytech`
+  - SEID `MTHYB2603261`
+  - TEID `10000`
+  - PIN `1000000030`
+  - status `Created`
+- `Esided`
+  - SEID `ESHYB2603261`
+  - TEID `9998`
+  - PIN `99980001`
+  - status `Created`
+
+Important caveat:
+
+- current live QA already has active PIN history on TEID `10000`
+- so recent `Markytech` TEID `10000` proofs are `maxPinCode + 1`
+- they are not proof of a first-ever empty-TEID first-PIN case
+
 ## 12. Current FastAPI Surface
 
 Routes currently present in `QA/app.py`:
@@ -492,6 +531,9 @@ Important deployment constraints preserved:
 - lower-camel `Insert`
 - detail-first `Update`
 - deterministic PIN logic
+- hybrid new-site first-PIN logic:
+  - default/non-Esided accounts use 9-digit-total new-site PIN logic
+  - `Esided` keeps its working account-specific first-PIN format
 - API 2 as final existing/new-site authority
 - frontend manual review -> commit split
 - legacy `/process` bulk upload path

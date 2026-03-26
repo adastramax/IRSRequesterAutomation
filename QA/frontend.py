@@ -482,15 +482,16 @@ def empty_deactivate_results_df() -> pd.DataFrame:
 def render_add_review(review: dict[str, Any], row: dict[str, Any]) -> None:
     r = first_result(review)
     corrected = r.get("corrected_data") or {}
+    bod_value = corrected.get("corrected_bod") or row.get("BOD")
     status = str(r.get("status", "")).strip()
     msg = last_note(r.get("notes")) or "The request could not be reviewed."
     if status == "Reviewed":
         msg = " ".join(x for x in [f"Site resolved to {clean_site(corrected.get('corrected_site_name'))}." if clean_site(corrected.get("corrected_site_name")) else "", f"TEID resolved to {corrected.get('resolved_site_id')}." if corrected.get("resolved_site_id") else "", "Review looks ready for commit."] if x)
-        status_card("Ready for review", msg, "info", [("Requester Name", requester_name(row)), ("SEID", row.get("SEID")), ("Site", clean_site(corrected.get("corrected_site_name")) or row.get("Site Name")), ("TEID", corrected.get("resolved_site_id"))], "If the details look correct, select Upload To Connect.")
+        status_card("Ready for review", msg, "info", [("BOD", bod_value), ("Requester Name", requester_name(row)), ("SEID", row.get("SEID")), ("Site", clean_site(corrected.get("corrected_site_name")) or row.get("Site Name")), ("TEID", corrected.get("resolved_site_id"))], "If the details look correct, select Upload To Connect.")
     elif status == "Manual Selection Required":
-        status_card("Manual input required", msg or "Manual input is required before processing can continue.", "warning", [("Requester Name", requester_name(row)), ("SEID", row.get("SEID")), ("Site", row.get("Site Name"))], "Provide a more specific Site ID or Manual Site Name, then review again.")
+        status_card("Manual input required", msg or "Manual input is required before processing can continue.", "warning", [("BOD", bod_value), ("Requester Name", requester_name(row)), ("SEID", row.get("SEID")), ("Site", row.get("Site Name"))], "Provide a more specific Site ID or Manual Site Name, then review again.")
     else:
-        status_card("Failed", msg, "error", [("Requester Name", requester_name(row)), ("SEID", row.get("SEID"))], "Check the form values and try again.")
+        status_card("Failed", msg, "error", [("BOD", bod_value), ("Requester Name", requester_name(row)), ("SEID", row.get("SEID"))], "Check the form values and try again.")
 
 
 def render_add_commit(commit: dict[str, Any], row: dict[str, Any]) -> None:
@@ -498,7 +499,7 @@ def render_add_commit(commit: dict[str, Any], row: dict[str, Any]) -> None:
     corrected = c.get("corrected_data") or {}
     result = c.get("result") or {}
     status = str(result.get("status", "")).strip()
-    fields = [("Requester Name", requester_name(row)), ("SEID", row.get("SEID")), ("Site", clean_site(result.get("posted_payload_address")) or clean_site(corrected.get("corrected_site_name")) or row.get("Site Name")), ("TEID", result.get("teid")), ("Generated PIN", result.get("pin"))]
+    fields = [("BOD", corrected.get("corrected_bod") or row.get("BOD")), ("Requester Name", requester_name(row)), ("SEID", row.get("SEID")), ("Site", clean_site(result.get("posted_payload_address")) or clean_site(corrected.get("corrected_site_name")) or row.get("Site Name")), ("TEID", result.get("teid")), ("Generated PIN", result.get("pin"))]
     message = str(result.get("message", "")).strip() or "The request finished without a detailed message."
     if status == "Created":
         status_card("Created successfully", message, "success", fields)
@@ -758,10 +759,10 @@ def render_add_requester_page() -> None:
         with c2:
             st.text_input("Last Name *", key="add_last_name_input")
             st.text_input("Site ID (Optional)", key="add_site_id_input")
-            st.text_input("Manual Site Name (Optional)", key="add_manual_site_name_input")
+            st.text_input("Manual Site Name (Only if Manual Selection Required)", key="add_manual_site_name_input")
         st.caption("Required fields are marked with *")
         st.caption("Site ID: only provide if the exact site is already known.")
-        st.caption("Manual Site Name: use only when the site name needs to be overridden.")
+        st.caption("Use Manual Site Name only when the review flow asks for manual site selection.")
 
     manual_row = add_row(
         st.session_state.add_bod_input,

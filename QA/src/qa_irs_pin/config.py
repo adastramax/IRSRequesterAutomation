@@ -18,6 +18,8 @@ DEFAULT_NATIVE_LANGUAGE = None
 DEFAULT_TIMEZONE = "b9efba83-5fb3-11ef-8538-0291956bad29"
 DEFAULT_PRECALL_POLICY = int(os.getenv("QA_PRECALL_POLICY", "19"))
 DEFAULT_SERVICE_TYPE = "SVC_COM"
+DEFAULT_NEW_SITE_PIN_SUFFIX = 5
+DEFAULT_NEW_SITE_PIN_TOTAL_LENGTH = 9
 SITE_MATCH_THRESHOLD = float(os.getenv("SITE_MATCH_THRESHOLD", "80"))
 REQUEST_TIMEOUT_SECONDS = int(os.getenv("QA_REQUEST_TIMEOUT_SECONDS", "30"))
 
@@ -50,6 +52,7 @@ CUSTOMER_CREATE_OVERRIDES = {
         "precall_policy": 19,
         "service_type": "SVC_COM",
         "service_types": [DEFAULT_SERVICE_TYPE],
+        "new_site_pin_total_length": DEFAULT_NEW_SITE_PIN_TOTAL_LENGTH,
     },
     "esided": {
         "default_native_language": "urd",
@@ -63,6 +66,35 @@ CUSTOMER_CREATE_OVERRIDES = {
         "precall_policy": 9,
         "service_type": "BU",
         "service_types": ["BU"],
+        "new_site_pin_suffix": 4,
+    },
+    "almas test company": {
+        "default_native_language": "EN",
+        "default_timezone": DEFAULT_TIMEZONE,
+        "default_location": 28,
+        "sub_customer_ids": [293],
+        "opi_scheduled": True,
+        "opi_ondemand": True,
+        "password": "Welcome123!",
+        "set_password": True,
+        "precall_policy": 19,
+        "service_type": "SVC_COM",
+        "service_types": [DEFAULT_SERVICE_TYPE],
+        "new_site_pin_total_length": DEFAULT_NEW_SITE_PIN_TOTAL_LENGTH,
+    },
+    "fedex capital district": {
+        "default_native_language": "EN",
+        "default_timezone": DEFAULT_TIMEZONE,
+        "default_location": 27,
+        "sub_customer_ids": [292],
+        "opi_scheduled": True,
+        "opi_ondemand": True,
+        "password": "Welcome123!",
+        "set_password": True,
+        "precall_policy": 19,
+        "service_type": "SVC_COM",
+        "service_types": [DEFAULT_SERVICE_TYPE],
+        "new_site_pin_total_length": DEFAULT_NEW_SITE_PIN_TOTAL_LENGTH,
     }
 }
 
@@ -125,6 +157,12 @@ BOD_LOOKUP = {
     "MZ": {"bod_code": "MZ", "customer_name": "Markytech", "fk_customer": 277},
     "ESIDED": {"bod_code": "ESIDED", "customer_name": "Esided", "fk_customer": 270},
     "ES": {"bod_code": "ES", "customer_name": "Esided", "fk_customer": 270},
+    "ALMAS TEST COMPANY": {"bod_code": "ALMAS TEST COMPANY", "customer_name": "Almas Test Company", "fk_customer": 293},
+    "ALMAS": {"bod_code": "ALMAS", "customer_name": "Almas Test Company", "fk_customer": 293},
+    "ATC": {"bod_code": "ATC", "customer_name": "Almas Test Company", "fk_customer": 293},
+    "FEDEX CAPITAL DISTRICT": {"bod_code": "FEDEX CAPITAL DISTRICT", "customer_name": "FedEx Capital District", "fk_customer": 292},
+    "FEDX": {"bod_code": "FEDX", "customer_name": "FedEx Capital District", "fk_customer": 292},
+    "FCD": {"bod_code": "FCD", "customer_name": "FedEx Capital District", "fk_customer": 292},
     "QA": {"bod_code": "QA", "customer_name": "Markytech", "fk_customer": 277},
 }
 

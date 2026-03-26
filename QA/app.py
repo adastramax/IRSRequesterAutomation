@@ -18,13 +18,13 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from qa_irs_pin import registry
-from qa_irs_pin.config import DB_PATH, SITE_MATCH_THRESHOLD
+from qa_irs_pin.config import CUSTOMER_CREATE_OVERRIDES, DB_PATH, DEFAULT_NEW_SITE_PIN_SUFFIX, SITE_MATCH_THRESHOLD
 from qa_irs_pin.matching import best_site_match, requires_explicit_site_confirmation
 from qa_irs_pin.parser import parse_input_bytes, parse_input_records
 from qa_irs_pin.payloads import build_create_payload
 from qa_irs_pin.processor import process_rows, resolve_blank_site_id_path
 from utils.client import ConnectQAClient
-from utils.helpers import next_new_site_pin, next_pin, normalize_teid, resolve_customer_context
+from utils.helpers import is_missing_fk_value, next_new_site_pin, next_pin, normalize_teid, resolve_customer_context
 
 app = FastAPI(title="IRS PIN QA Tool")
 
@@ -197,6 +197,20 @@ def _run_commit_request(request: ProcessRowsRequest) -> dict[str, Any]:
     return _format_rows_response(request_rows, result_dict, debug=request.debug)
 
 
+def _new_site_pin_settings(customer_name: str) -> dict[str, int]:
+    customer_override = CUSTOMER_CREATE_OVERRIDES.get(customer_name.lower(), {})
+    if "new_site_pin_total_length" in customer_override:
+        return {"total_length": int(customer_override["new_site_pin_total_length"])}
+    return {"suffix_width": int(customer_override.get("new_site_pin_suffix", DEFAULT_NEW_SITE_PIN_SUFFIX))}
+
+
+def _next_four_digit_teid(current_max_teid: str) -> str:
+    next_teid = int(current_max_teid) + 1
+    if next_teid > 9999:
+        raise ValueError("Cannot assign a new TEID because the 4-digit TEID limit of 9999 has been reached.")
+    return str(next_teid).zfill(4)
+
+
 def _review_rows(request_rows: list[InputRowRequest], *, debug: bool) -> dict[str, Any]:
     request_row_dicts = _request_rows_to_dicts(request_rows)
     parsed_rows = parse_input_records(request_row_dicts)
@@ -217,6 +231,8 @@ def _review_rows(request_rows: list[InputRowRequest], *, debug: bool) -> dict[st
             raise ValueError("API 2 did not return currentMaxTeid for a new site review.")
 
         next_teid = max(run_next_new_teid.get(customer_name, 0), int(current_max_teid) + 1)
+        if next_teid > 9999:
+            raise ValueError("Cannot assign a new TEID because the 4-digit TEID limit of 9999 has been reached.")
         assigned_teid = str(next_teid).zfill(4)
         customer_site_teids[site_key] = assigned_teid
         run_next_new_teid[customer_name] = next_teid + 1
@@ -368,18 +384,18 @@ def _review_rows(request_rows: list[InputRowRequest], *, debug: bool) -> dict[st
                     if not effective_teid and not teid_resolution.get("siteExists"):
                         current_max_teid = normalize_teid(teid_resolution.get("currentMaxTeid"))
                         if current_max_teid:
-                            effective_teid = str(int(current_max_teid) + 1).zfill(4)
+                            effective_teid = _next_four_digit_teid(current_max_teid)
                     if effective_teid:
                         resolved_site_id = effective_teid
                         pin_context = app.state.client.get_pin_context(corrected_bod, effective_teid)
                         pin_context["siteName"] = corrected_site_name
                         pin_context["customerName"] = corrected_bod
-                        if not pin_context.get("fK_Customer") and customer_context.get("fk_customer"):
+                        if is_missing_fk_value(pin_context.get("fK_Customer")) and customer_context.get("fk_customer"):
                             pin_context["fK_Customer"] = customer_context["fk_customer"]
                         generated_pin = (
-                            next_pin(pin_context.get("maxPinCode"), effective_teid)
+                            next_pin(pin_context.get("maxPinCode"), effective_teid, **_new_site_pin_settings(corrected_bod))
                             if pin_context.get("maxPinCode")
-                            else next_new_site_pin(effective_teid)
+                            else next_new_site_pin(effective_teid, **_new_site_pin_settings(corrected_bod))
                         )
                         suggested_connect_payload = build_create_payload(row, pin_context, generated_pin)
                         commit_site_name = corrected_site_name

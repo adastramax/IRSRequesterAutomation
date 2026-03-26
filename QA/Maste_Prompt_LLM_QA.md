@@ -68,7 +68,9 @@ Most important QA rules to preserve:
 
 3. New-site first PIN rule
 - if maxPinCode exists: int(maxPinCode) + 1
-- if maxPinCode is null for a new site: int(f"{teid}00001")
+- if maxPinCode is null for a new site:
+  - default/non-Esided accounts use 9-digit-total new-site PIN logic
+  - Esided keeps its working account-specific first-PIN format
 
 4. Deactivate is detail-first
 - resolve requester by SEID
@@ -109,6 +111,7 @@ Current frontend contract:
 - Deactivate Requester should keep the same clean button-row workflow as Add Requester
 - Deactivate Requester supports bulk CSV/XLS/XLSX upload through `/process/commit`
 - Add user-visible reviewed/results/export tables include `GENERATED PIN`
+- Add manual-entry review/processed cards should also show the resolved full `BOD`
 - Deactivate user-visible reviewed/results/export tables must not include `GENERATED PIN`
 - Deactivate review rows should use concise message text like `Ready for deactivate` instead of relying on a final `NAME`
 - Deactivate processed/results/export `NAME` must show only the real full human name, not `SEID Full Name`
@@ -164,8 +167,11 @@ Current verified behaviors to remember:
 - same-run unique sequential TEID allocation for distinct new sites
 - same-run TEID reuse for repeated same new site
 - review/commit TEID parity for same-run new-site preview
+- review/commit first-PIN parity for same-run new-site preview
 - safe-subset auto-match for Flat C and House 101
 - differentiated Jacksonville variants remain differentiated
+- Esided new-site first PIN remains account-specific because the universal non-Esided version failed live
+- current live QA already has active PIN history on Markytech TEID 10000, so recent 10000 proofs are maxPinCode+1 rather than first-ever empty-TEID proofs
 - local audit DB keeps recent history only and prunes older audit data automatically
 
 Known bad record:

@@ -9,13 +9,13 @@ from pathlib import Path
 from typing import Iterable
 
 from qa_irs_pin import registry
-from qa_irs_pin.config import DB_PATH, OUTPUT_DIR, SITE_MATCH_THRESHOLD
+from qa_irs_pin.config import CUSTOMER_CREATE_OVERRIDES, DB_PATH, DEFAULT_NEW_SITE_PIN_SUFFIX, DEFAULT_NEW_SITE_PIN_TOTAL_LENGTH, OUTPUT_DIR, SITE_MATCH_THRESHOLD
 from qa_irs_pin.matching import best_site_match, normalize_site_name, requires_explicit_site_confirmation, tokenize, top_site_matches
 from qa_irs_pin.models import ParsedRow, ProcessingRunResult, RowProcessingOutcome
 from qa_irs_pin.parser import parse_input_file
 from qa_irs_pin.payloads import build_create_payload, build_deactivate_payload
 from utils.client import ConnectAPIError, ConnectQAClient
-from utils.helpers import next_new_site_pin, next_pin, normalize_teid, resolve_customer_context
+from utils.helpers import is_missing_fk_value, next_new_site_pin, next_pin, normalize_teid, resolve_customer_context
 
 
 def _build_summary(row_results: list[RowProcessingOutcome]) -> dict[str, int]:
@@ -114,7 +114,7 @@ def resolve_blank_site_id_path(
         current_max_teid = normalize_teid(teid_resolution.get("currentMaxTeid"))
         if not current_max_teid:
             raise ConnectAPIError("API 2 did not return currentMaxTeid for a new site.")
-        resolved_teid = str(int(current_max_teid) + 1).zfill(4)
+        resolved_teid = _next_four_digit_teid(current_max_teid)
 
     return {
         "matched_site_name": matched_site_name,
@@ -124,6 +124,20 @@ def resolve_blank_site_id_path(
         "strategy": strategy,
         "notes": notes,
     }
+
+
+def _new_site_pin_settings(customer_name: str) -> dict[str, int]:
+    customer_override = CUSTOMER_CREATE_OVERRIDES.get(customer_name.lower(), {})
+    if "new_site_pin_total_length" in customer_override:
+        return {"total_length": int(customer_override["new_site_pin_total_length"])}
+    return {"suffix_width": int(customer_override.get("new_site_pin_suffix", DEFAULT_NEW_SITE_PIN_SUFFIX))}
+
+
+def _next_four_digit_teid(current_max_teid: str) -> str:
+    next_teid = int(current_max_teid) + 1
+    if next_teid > 9999:
+        raise ConnectAPIError("Cannot assign a new TEID because the 4-digit TEID limit of 9999 has been reached.")
+    return str(next_teid).zfill(4)
 
 
 def process_rows(
@@ -166,6 +180,8 @@ def process_rows(
                 raise ConnectAPIError("API 2 did not return currentMaxTeid for a new site.")
 
             next_teid = max(run_next_new_teid.get(customer_name, 0), int(current_max_teid) + 1)
+            if next_teid > 9999:
+                raise ConnectAPIError("Cannot assign a new TEID because the 4-digit TEID limit of 9999 has been reached.")
             assigned_teid = str(next_teid).zfill(4)
             customer_site_teids[site_key] = assigned_teid
             run_next_new_teid[customer_name] = next_teid + 1
@@ -445,7 +461,7 @@ def process_rows(
                         pin_context["siteName"] = matched_site_name
                     log("pin_context", "Loaded pin context after TEID resolution", row_number=row.row_number, details={"resolved_teid": resolved_teid, "pin_context": pin_context})
 
-                if not pin_context.get("fK_Customer") and customer_context.get("fk_customer"):
+                if is_missing_fk_value(pin_context.get("fK_Customer")) and customer_context.get("fk_customer"):
                     pin_context["fK_Customer"] = customer_context["fk_customer"]
                 pin_context["siteName"] = matched_site_name or row.site_name
                 pin_context.setdefault("customerName", customer_name)
@@ -497,14 +513,17 @@ def process_rows(
                     continue
 
                 if pin_context.get("maxPinCode"):
-                    generated_pin = next_pin(pin_context.get("maxPinCode"), resolved_teid or "")
+                    generated_pin = next_pin(pin_context.get("maxPinCode"), resolved_teid or "", **_new_site_pin_settings(customer_name))
                     row_notes.append("Generated PIN using maxPinCode + 1.")
                     log("pin_generation", "Generated PIN from existing maxPinCode", row_number=row.row_number, details={"resolved_teid": resolved_teid, "previous_max_pin": pin_context.get("maxPinCode"), "generated_pin": generated_pin})
                 else:
                     if address_count_before is None:
                         raise ConnectAPIError("maxPinCode is null for a requester row that did not go through new-site resolution.")
-                    generated_pin = next_new_site_pin(resolved_teid or "")
-                    row_notes.append("Generated PIN using new-site first PIN rule: TEID + 00001.")
+                    generated_pin = next_new_site_pin(
+                        resolved_teid or "",
+                        **_new_site_pin_settings(customer_name),
+                    )
+                    row_notes.append("Generated PIN using account-specific new-site PIN formatting.")
                     log("pin_generation", "Generated PIN using new-site first PIN rule", row_number=row.row_number, details={"resolved_teid": resolved_teid, "generated_pin": generated_pin})
 
                 payload = build_create_payload(row, pin_context, generated_pin)
