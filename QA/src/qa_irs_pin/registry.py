@@ -6,7 +6,7 @@ import json
 import sqlite3
 from pathlib import Path
 
-from .config import DB_PATH
+from .config import AUDIT_RETENTION_DAYS, DB_PATH
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS stg_irs_pin_registry (
@@ -49,8 +49,40 @@ def initialize_database(db_path: Path = DB_PATH) -> Path:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     with get_connection(db_path) as connection:
         connection.executescript(SCHEMA_SQL)
+        purge_old_audit_data(connection)
         connection.commit()
     return db_path
+
+
+def purge_old_audit_data(
+    connection: sqlite3.Connection,
+    *,
+    retention_days: int = AUDIT_RETENTION_DAYS,
+) -> None:
+    if retention_days <= 0:
+        return
+
+    batch_rows = connection.execute(
+        """
+        SELECT batch_id
+        FROM batch_audit
+        WHERE created_dt < datetime('now', ?)
+        """,
+        (f"-{retention_days} days",),
+    ).fetchall()
+    batch_ids = [str(row["batch_id"]) for row in batch_rows if row["batch_id"]]
+    if not batch_ids:
+        return
+
+    placeholders = ",".join("?" for _ in batch_ids)
+    connection.execute(
+        f"DELETE FROM stg_irs_pin_registry WHERE batch_id IN ({placeholders})",
+        batch_ids,
+    )
+    connection.execute(
+        f"DELETE FROM batch_audit WHERE batch_id IN ({placeholders})",
+        batch_ids,
+    )
 
 
 def write_pin_registry(

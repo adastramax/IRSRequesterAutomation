@@ -26,6 +26,7 @@ Current Streamlit UX:
 - Add Requester helper copy is:
   - `Upload a file for multiple requesters, or enter one requester below.`
 - Deactivate Requester uses the same clean operations-style layout
+- Deactivate Requester supports bulk CSV/XLS/XLSX upload
 - Dev Use remains the raw/debug page, but it is now behind a lightweight frontend sign-in gate in `frontend.py`
 
 ## 2. Current Code Shape
@@ -52,6 +53,7 @@ Architecture currently remains split across parser, matching, payloads, and proc
 - service layer uses live QA APIs
 - one processor drives CLI, FastAPI, and Streamlit
 - local SQLite is still used for audit / registry
+- local SQLite audit data now has automatic retention cleanup
 
 Important source-of-truth rule:
 
@@ -197,6 +199,18 @@ Current per-row commit response always includes:
 - `pin`
 - `posted_payload_address`
 
+## 7A. Recent Payload / TEID / Output Fixes
+
+- add payload create remap is now:
+  - `firstName = SEID`
+  - `lastName = "<First Name> <Last Name>"`
+  - `email = "<SEID>.<First Name>.<Last Name>@ad-astrainc.com"` in lowercase
+- distinct new sites in one run get unique sequential TEIDs
+- repeated same new site in one run reuses the same TEID
+- review and commit now match for same-run new-site TEID assignment
+- same-run allocator applies only within one request/run
+- cross-run starting TEID still comes from live API 2 `currentMaxTeid`
+
 ## 8. Frontend Contract Fix
 
 Earlier frontend state:
@@ -222,6 +236,7 @@ Current frontend state:
 - Dev Use still exposes raw review/commit responses and payload detail
 - Dev Use is now gated by a lightweight frontend sign-in screen and relocks on logout
 - Deactivate Requester now follows the same operations-style button pattern as Add Requester
+- processed results now show full client name like `Markytech` in `BOD`
 
 Manual UI fields are now only:
 
@@ -241,8 +256,14 @@ Deactivation is now a separate page with the same clean operations pattern:
 - `Review`
 - `Deactivate`
 - `Refresh`
+- bulk CSV/XLS/XLSX upload is supported
+- bulk deactivate uses `/process/commit`
 
 Normal users see polished status cards instead of raw logs.
+- Add user-visible reviewed/results/export tables include `GENERATED PIN`
+- Deactivate user-visible reviewed/results/export tables do not include `GENERATED PIN`
+- Deactivate review rows do not rely on a final `NAME`; they use concise messages like `Ready for deactivate`
+- Deactivate processed/results/export `NAME` shows only the real full human name, not `SEID Full Name`
 
 ## 9. Manual-Selection Logic Fix
 
@@ -374,6 +395,8 @@ Current meaning:
 - `/process/commit`: main frontend commit endpoint
 - `/process`: legacy file/form endpoint for bulk upload
 - `/process/rows`: redundant JSON commit alias
+- Add bulk still uses legacy `/process`
+- Deactivate bulk uses `/process/commit`
 
 ## 13. Current Cleanup State
 
@@ -382,6 +405,16 @@ Old proof/test SQLite files were removed.
 The active QA DB is now:
 
 - `QA/data/qa_irs_pin.db`
+
+Current local audit retention behavior:
+
+- `QA/data/qa_irs_pin.db` is still the active local SQLite audit/registry DB
+- the app does not depend on old DB rows for live QA business logic
+- old local audit rows are now pruned automatically in the DB layer
+- default retention is `7` days
+- retention is controlled by env var:
+  - `QA_AUDIT_RETENTION_DAYS`
+- cleanup deletes old `batch_audit` rows and matching `stg_irs_pin_registry` rows for those batch ids
 
 ## 14. EC2 Deployment Snapshot
 

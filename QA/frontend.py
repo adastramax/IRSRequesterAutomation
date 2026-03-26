@@ -54,10 +54,18 @@ def ensure_state() -> None:
         "deactivate_request": None,
         "deactivate_ready": None,
         "deactivate_commit": None,
+        "deactivate_active_workflow": "manual",
         "deactivate_bod_input": "MARKYTECH",
         "deactivate_seid_input": "",
         "deactivate_site_name_input": "",
         "deactivate_site_id_input": "",
+        "deactivate_bulk_file_name": None,
+        "deactivate_bulk_file_bytes": None,
+        "deactivate_bulk_file_type": None,
+        "deactivate_bulk_preview_rows": [],
+        "deactivate_bulk_review_result": None,
+        "deactivate_bulk_result": None,
+        "deactivate_bulk_uploader_version": 0,
         "deactivate_reset_requested": False,
         "dev_mode": "Enter Manually",
         "dev_request": None,
@@ -383,6 +391,16 @@ def requester_name(row: dict[str, Any]) -> str:
     return f"{row.get('First Name', '').strip()} {row.get('Last Name', '').strip()}".strip()
 
 
+def safe_deactivate_name(first_name: Any, last_name: Any, fallback: str = "") -> str:
+    sentinels = {"__DEACTIVATE__", "__REQUESTER__"}
+    first = str(first_name or "").strip()
+    last = str(last_name or "").strip()
+    parts = [part for part in (first, last) if part and part not in sentinels]
+    if parts:
+        return " ".join(parts)
+    return fallback
+
+
 def row_to_preview_dict(row: ParsedRow) -> dict[str, Any]:
     payload = row.to_dict()
     payload["notes"] = " | ".join(payload["notes"])
@@ -394,8 +412,12 @@ def add_row(bod: str, first: str, last: str, seid: str, site_name: str, site_id:
     return {"BOD": bod, "First Name": first.strip(), "Last Name": last.strip(), "SEID": seid.strip(), "Site Name": site_name.strip(), "Site ID": site_id.strip(), "Contact Status": "Add", "Manual Site Name": manual_site_name.strip()}
 
 
-def deactivate_row(bod: str, seid: str, site_name: str, site_id: str) -> dict[str, str]:
-    return {"BOD": bod, "First Name": "__DEACTIVATE__", "Last Name": "__REQUESTER__", "SEID": seid.strip(), "Site Name": site_name.strip() or DEACT_SITE, "Site ID": site_id.strip(), "Contact Status": "Deactivate", "Manual Site Name": ""}
+def deactivate_row(bod: str, seid: str, site_name: str, site_id: str, first_name: str = "", last_name: str = "") -> dict[str, str]:
+    return {"BOD": bod, "First Name": first_name.strip(), "Last Name": last_name.strip(), "SEID": seid.strip(), "Site Name": site_name.strip() or DEACT_SITE, "Site ID": site_id.strip(), "Contact Status": "Deactivate", "Manual Site Name": ""}
+
+
+def deactivate_bulk_row(raw_row: ParsedRow) -> dict[str, str]:
+    return deactivate_row(raw_row.bod, raw_row.seid, raw_row.site_name, raw_row.site_id, raw_row.first_name, raw_row.last_name)
 
 
 def post_review(row: dict[str, Any]) -> dict[str, Any]:
@@ -426,6 +448,35 @@ def post_file(uploaded_file) -> dict[str, Any]:
     r = requests.post(f"{BACKEND_URL}/process", data={"write_output": "true"}, files={"file": (uploaded_file.name, uploaded_file.getvalue(), uploaded_file.type or "application/octet-stream")}, timeout=300)
     r.raise_for_status()
     return r.json()
+
+
+def processed_result_columns() -> list[str]:
+    return ["BOD", "SITE Name", "TEID", "SEID", "NAME", "STATUS", "MESSAGE", "GENERATED PIN"]
+
+
+def deactivate_result_columns() -> list[str]:
+    return ["BOD", "SITE Name", "TEID", "SEID", "NAME", "STATUS", "MESSAGE"]
+
+
+def processed_result_row(*, bod: Any, site_name: Any, teid: Any, seid: Any, name: Any, status: Any, message: Any, generated_pin: Any) -> dict[str, Any]:
+    return {
+        "BOD": bod or "",
+        "SITE Name": clean_site(site_name),
+        "TEID": teid or "",
+        "SEID": seid or "",
+        "NAME": name or "",
+        "STATUS": status or "",
+        "MESSAGE": message or "",
+        "GENERATED PIN": generated_pin or "",
+    }
+
+
+def empty_processed_results_df() -> pd.DataFrame:
+    return pd.DataFrame(columns=processed_result_columns())
+
+
+def empty_deactivate_results_df() -> pd.DataFrame:
+    return pd.DataFrame(columns=deactivate_result_columns())
 
 
 def render_add_review(review: dict[str, Any], row: dict[str, Any]) -> None:
@@ -461,12 +512,7 @@ def render_add_commit(commit: dict[str, Any], row: dict[str, Any]) -> None:
 def render_bulk_result(result: dict[str, Any], preview_rows: list[ParsedRow]) -> None:
     summary = result.get("summary") or {}
     metric_cards([("Total rows", summary.get("total", len(preview_rows)), "Rows received"), ("Created", summary.get("Created", 0), "Requesters created"), ("Failed", summary.get("Failed", 0), "Rows not completed"), ("Manual review required", summary.get("Manual Selection Required", 0), "Needs follow-up")])
-    preview_map = {r.row_number: r for r in preview_rows}
-    rows = []
-    for row in result.get("row_results", []):
-        preview = preview_map.get(row.get("row_number"))
-        rows.append({"SEID": row.get("seid", ""), "Name": f"{preview.first_name} {preview.last_name}".strip() if preview else "", "Status": row.get("status", ""), "Message": str((row.get("response") or {}).get("text", "")).strip() or last_note(row.get("notes")), "Generated PIN": row.get("generated_pin", ""), "TEID": row.get("resolved_site_id", "")})
-    df = pd.DataFrame(rows)
+    df = build_raw_processed_results_table(result, preview_rows)
     heading("Processed results", "Review row-level outcomes without raw logs.")
     render_clean_results_table(df)
     if not df.empty:
@@ -487,6 +533,23 @@ def build_bulk_preview_table(rows: list[ParsedRow]) -> pd.DataFrame:
             }
         )
     return pd.DataFrame(preview_rows)
+
+
+def build_deactivate_bulk_preview_table(rows: list[ParsedRow]) -> pd.DataFrame:
+    preview_rows: list[dict[str, Any]] = []
+    for row in rows:
+        preview_rows.append(
+            {
+                "BOD": row.bod,
+                "NAME": safe_deactivate_name(row.first_name, row.last_name),
+                "SEID": row.seid,
+                "SITE Name": clean_site(row.site_name),
+                "TEID": row.site_id,
+                "STATUS": "Ready for review",
+                "MESSAGE": "",
+            }
+        )
+    return pd.DataFrame(preview_rows, columns=deactivate_result_columns())
 
 
 def parsed_rows_to_request_rows(rows: list[ParsedRow]) -> list[dict[str, str]]:
@@ -526,6 +589,91 @@ def build_bulk_review_table(review_result: dict[str, Any]) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def build_deactivate_bulk_review_table(review_result: dict[str, Any]) -> pd.DataFrame:
+    rows: list[dict[str, Any]] = []
+    for result in review_result.get("results", []):
+        input_row = result.get("input") or {}
+        corrected = result.get("corrected_data") or {}
+        rows.append(
+            {
+                "BOD": corrected.get("corrected_bod") or input_row.get("BOD", ""),
+                "SITE Name": clean_site(corrected.get("corrected_site_name")) or input_row.get("Site Name", ""),
+                "TEID": corrected.get("resolved_site_id") or input_row.get("Site ID", ""),
+                "SEID": input_row.get("SEID", ""),
+                "NAME": "",
+                "STATUS": result.get("status", ""),
+                "MESSAGE": "Ready for deactivate" if str(result.get("status", "")).strip() == "Reviewed" else (last_note(result.get("notes")) if isinstance(result.get("notes"), list) else ""),
+            }
+        )
+    return pd.DataFrame(rows, columns=deactivate_result_columns()) if rows else empty_deactivate_results_df()
+
+
+def build_raw_processed_results_table(result: dict[str, Any], preview_rows: list[ParsedRow]) -> pd.DataFrame:
+    preview_map = {r.row_number: r for r in preview_rows}
+    rows: list[dict[str, Any]] = []
+    for row in result.get("row_results", []):
+        preview = preview_map.get(row.get("row_number"))
+        rows.append(
+            processed_result_row(
+                bod=row.get("customer_name") or row.get("bod", ""),
+                site_name=row.get("matched_site_name") or row.get("input_site_name") or (preview.site_name if preview else ""),
+                teid=row.get("resolved_site_id", ""),
+                seid=row.get("seid", ""),
+                name=f"{preview.first_name} {preview.last_name}".strip() if preview else "",
+                status=row.get("status", ""),
+                message=str((row.get("response") or {}).get("text", "")).strip() or last_note(row.get("notes")),
+                generated_pin=row.get("generated_pin", ""),
+            )
+        )
+    return pd.DataFrame(rows, columns=processed_result_columns()) if rows else empty_processed_results_df()
+
+
+def build_commit_results_table(commit_result: dict[str, Any]) -> pd.DataFrame:
+    rows: list[dict[str, Any]] = []
+    for result in commit_result.get("results", []):
+        input_row = result.get("input") or {}
+        corrected = result.get("corrected_data") or {}
+        output = result.get("result") or {}
+        rows.append(
+            processed_result_row(
+                bod=corrected.get("corrected_bod") or input_row.get("BOD", ""),
+                site_name=output.get("posted_payload_address") or corrected.get("corrected_site_name") or input_row.get("Site Name", ""),
+                teid=output.get("teid", ""),
+                seid=input_row.get("SEID", ""),
+                name=f"{input_row.get('First Name', '').strip()} {input_row.get('Last Name', '').strip()}".strip(),
+                status=output.get("status", ""),
+                message=output.get("message", ""),
+                generated_pin=output.get("pin", ""),
+            )
+        )
+    return pd.DataFrame(rows, columns=processed_result_columns()) if rows else empty_processed_results_df()
+
+
+def build_deactivate_commit_results_table(commit_result: dict[str, Any]) -> pd.DataFrame:
+    rows: list[dict[str, Any]] = []
+    for result in commit_result.get("results", []):
+        input_row = result.get("input") or {}
+        corrected = result.get("corrected_data") or {}
+        output = result.get("result") or {}
+        connect_payload = result.get("connect_payload") or {}
+        rows.append(
+            {
+                "BOD": corrected.get("corrected_bod") or input_row.get("BOD", ""),
+                "SITE Name": output.get("posted_payload_address") or corrected.get("corrected_site_name") or input_row.get("Site Name", ""),
+                "TEID": output.get("teid", ""),
+                "SEID": input_row.get("SEID", ""),
+                "NAME": safe_deactivate_name(
+                    "",
+                    connect_payload.get("LastName", ""),
+                    fallback=safe_deactivate_name("", input_row.get("Last Name", "")),
+                ),
+                "STATUS": output.get("status", ""),
+                "MESSAGE": output.get("message", ""),
+            }
+        )
+    return pd.DataFrame(rows, columns=deactivate_result_columns()) if rows else empty_deactivate_results_df()
+
+
 def render_clean_results_table(df: pd.DataFrame) -> None:
     if df.empty:
         st.info("No row-level results were returned for this upload.")
@@ -538,7 +686,7 @@ def render_clean_results_table(df: pd.DataFrame) -> None:
         cells: list[str] = []
         for column in display_df.columns:
             value = row[column]
-            if column == "Status":
+            if column == "STATUS":
                 status_text = str(value)
                 status_class = status_text.strip().lower().replace(" ", "-")
                 cells.append(
@@ -737,22 +885,38 @@ def render_deactivate_requester_page() -> None:
         st.session_state.deactivate_request = None
         st.session_state.deactivate_ready = None
         st.session_state.deactivate_commit = None
+        st.session_state.deactivate_active_workflow = "manual"
         st.session_state.deactivate_bod_input = "MARKYTECH" if "MARKYTECH" in bods else bods[0]
         st.session_state.deactivate_seid_input = ""
         st.session_state.deactivate_site_name_input = ""
         st.session_state.deactivate_site_id_input = ""
+        st.session_state.deactivate_bulk_file_name = None
+        st.session_state.deactivate_bulk_file_bytes = None
+        st.session_state.deactivate_bulk_file_type = None
+        st.session_state.deactivate_bulk_preview_rows = []
+        st.session_state.deactivate_bulk_review_result = None
+        st.session_state.deactivate_bulk_result = None
+        st.session_state.deactivate_bulk_uploader_version += 1
         st.session_state.deactivate_reset_requested = False
 
     hero("Deactivate Requester", "Deactivate an existing requester using a focused workflow built for operations users.")
-    heading("Requester details", "Provide the requester identifier and optional site context if you have it.")
-    st.selectbox("BOD *", bods, index=default_bod, key="deactivate_bod_input")
-    st.text_input("SEID *", key="deactivate_seid_input")
-    with st.expander("Optional details"):
-        c1, c2 = st.columns(2)
-        with c1:
-            st.text_input("Site Name (Optional)", key="deactivate_site_name_input")
-        with c2:
-            st.text_input("Site ID (Optional)", key="deactivate_site_id_input")
+    heading("Bulk upload", "Upload the file, review the rows, then deactivate them in Connect.")
+    uploaded = st.file_uploader("Upload CSV or XLSX", type=["csv", "xlsx", "xls"], key=f"deactivate_bulk_uploader_{st.session_state.deactivate_bulk_uploader_version}")
+    if uploaded is not None:
+        st.session_state.deactivate_bulk_file_name = uploaded.name
+        st.session_state.deactivate_bulk_file_bytes = uploaded.getvalue()
+        st.session_state.deactivate_bulk_file_type = uploaded.type or "application/octet-stream"
+
+    with st.expander("Manual Entry", expanded=False):
+        heading("Requester details", "Provide the requester identifier and optional site context if you have it.")
+        st.selectbox("BOD *", bods, index=default_bod, key="deactivate_bod_input")
+        st.text_input("SEID *", key="deactivate_seid_input")
+        with st.expander("Optional details"):
+            c1, c2 = st.columns(2)
+            with c1:
+                st.text_input("Site Name (Optional)", key="deactivate_site_name_input")
+            with c2:
+                st.text_input("Site ID (Optional)", key="deactivate_site_id_input")
 
     request = deactivate_row(
         st.session_state.deactivate_bod_input,
@@ -766,34 +930,100 @@ def render_deactivate_requester_page() -> None:
         "Site Name": st.session_state.deactivate_site_name_input.strip(),
         "Site ID": st.session_state.deactivate_site_id_input.strip(),
     }
+    has_bulk_file = st.session_state.deactivate_bulk_file_bytes is not None
+    has_manual_input = any(ready[field].strip() for field in ["SEID", "Site Name", "Site ID"])
+    active_mode = st.session_state.deactivate_active_workflow
+    if has_manual_input or st.session_state.deactivate_ready or st.session_state.deactivate_commit:
+        active_mode = "manual"
+    elif has_bulk_file:
+        active_mode = "bulk"
 
     result_container = st.container()
     c1, c2, c3 = st.columns([1, 1, 0.8])
     with c1:
         if st.button("Review", use_container_width=True, key="deactivate_review_button"):
-            st.session_state.deactivate_request = request
-            st.session_state.deactivate_ready = ready
-            st.session_state.deactivate_commit = None
-            if not ready["BOD"].strip() or not ready["SEID"].strip():
-                st.error("BOD and SEID are required before deactivation can be reviewed.")
+            if active_mode == "bulk" and has_bulk_file:
+                try:
+                    st.session_state.deactivate_active_workflow = "bulk"
+                    with st.spinner("Reviewing uploaded file..."):
+                        parsed_rows = parse_input_bytes(
+                            st.session_state.deactivate_bulk_file_name,
+                            st.session_state.deactivate_bulk_file_bytes,
+                            default_contact_status="Deactivate",
+                        )
+                        st.session_state.deactivate_bulk_preview_rows = parsed_rows
+                        st.session_state.deactivate_bulk_review_result = post_bulk_review(
+                            [deactivate_bulk_row(row) for row in parsed_rows]
+                        )
+                        st.session_state.deactivate_bulk_result = None
+                    st.rerun()
+                except Exception as exc:  # noqa: BLE001
+                    st.session_state.deactivate_bulk_preview_rows = []
+                    st.session_state.deactivate_bulk_review_result = None
+                    st.error(f"Could not review the file: {exc}")
             else:
-                st.rerun()
+                st.session_state.deactivate_active_workflow = "manual"
+                st.session_state.deactivate_request = request
+                st.session_state.deactivate_ready = ready
+                st.session_state.deactivate_commit = None
+                st.session_state.deactivate_bulk_result = None
+                if not ready["BOD"].strip() or not ready["SEID"].strip():
+                    st.error("BOD and SEID are required before deactivation can be reviewed.")
+                else:
+                    st.rerun()
     with c2:
         if st.button("Deactivate", type="primary", use_container_width=True, key="deactivate_commit_button"):
-            st.session_state.deactivate_request = request
-            st.session_state.deactivate_ready = ready
-            try:
-                with st.spinner("Deactivating requester..."):
-                    st.session_state.deactivate_commit = post_commit({"rows": [request], "write_output": False, "debug": False})
-                st.rerun()
-            except requests.RequestException as exc:
-                st.error(f"Deactivation failed: {exc}")
+            if active_mode == "bulk" and has_bulk_file:
+                try:
+                    st.session_state.deactivate_active_workflow = "bulk"
+                    with st.spinner("Deactivating uploaded rows..."):
+                        rows = st.session_state.deactivate_bulk_preview_rows
+                        if not rows:
+                            rows = parse_input_bytes(
+                                st.session_state.deactivate_bulk_file_name,
+                                st.session_state.deactivate_bulk_file_bytes,
+                                default_contact_status="Deactivate",
+                            )
+                            st.session_state.deactivate_bulk_preview_rows = rows
+                        st.session_state.deactivate_bulk_result = post_commit(
+                            {
+                                "rows": [deactivate_bulk_row(row) for row in rows],
+                                "write_output": False,
+                                "debug": False,
+                            }
+                        )
+                    st.rerun()
+                except requests.RequestException as exc:
+                    st.error(f"Bulk deactivation failed: {exc}")
+            else:
+                st.session_state.deactivate_active_workflow = "manual"
+                st.session_state.deactivate_request = request
+                st.session_state.deactivate_ready = ready
+                try:
+                    with st.spinner("Deactivating requester..."):
+                        st.session_state.deactivate_commit = post_commit({"rows": [request], "write_output": False, "debug": False})
+                    st.rerun()
+                except requests.RequestException as exc:
+                    st.error(f"Deactivation failed: {exc}")
     with c3:
         if st.button("Refresh", use_container_width=True, key="deactivate_refresh_button"):
             st.session_state.deactivate_reset_requested = True
             st.rerun()
 
     with result_container:
+        if st.session_state.deactivate_bulk_preview_rows:
+            metric_cards([("Rows detected", len(st.session_state.deactivate_bulk_preview_rows), "Ready for deactivation")])
+            with st.expander("See reviewed rows", expanded=False):
+                review_df = build_deactivate_bulk_review_table(st.session_state.deactivate_bulk_review_result) if st.session_state.deactivate_bulk_review_result else build_deactivate_bulk_preview_table(st.session_state.deactivate_bulk_preview_rows)
+                render_clean_results_table(review_df)
+
+        if st.session_state.deactivate_bulk_result:
+            heading("Processed results", "Review row-level outcomes without raw logs.")
+            results_df = build_deactivate_commit_results_table(st.session_state.deactivate_bulk_result)
+            render_clean_results_table(results_df)
+            if not results_df.empty:
+                st.download_button("Download processed results", results_df.to_csv(index=False).encode("utf-8"), "irs_pin_deactivate_results.csv", "text/csv")
+
         if st.session_state.deactivate_ready:
             if not st.session_state.deactivate_ready.get("BOD") or not st.session_state.deactivate_ready.get("SEID"):
                 status_card("Failed", "BOD and SEID are required before deactivation can continue.", "error")

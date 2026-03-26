@@ -25,6 +25,7 @@ Important:
 - one processor still drives CLI, FastAPI, and Streamlit
 - `app.py` should stay a thin wrapper over `processor.py`
 - use this file together with `QA/SUMMARY.md` and `QA/Maste_Prompt_LLM_QA.md` for QA handoff
+- local audit retention cleanup now runs automatically in the registry layer
 
 ## Core QA Rules To Preserve
 
@@ -77,6 +78,8 @@ Important:
 6. API 2 is the actual authority for existing vs new TEID
 7. if API 2 says new site:
 - assign `currentMaxTeid + 1`
+- within one run, distinct new sites must get unique sequential TEIDs
+- within one run, repeated same new site must reuse the same TEID
 
 ## Current Matching / Manual Selection Behavior
 
@@ -172,6 +175,13 @@ Current response shape is consistent even when `debug=true`:
 - `pin`
 - `posted_payload_address`
 
+Current add payload identity remap:
+
+- outgoing create payload uses:
+  - `firstName = SEID`
+  - `lastName = "<First Name> <Last Name>"`
+  - `email = "<SEID>.<First Name>.<Last Name>@ad-astrainc.com"` in lowercase
+
 ### `/process`
 
 Purpose:
@@ -190,6 +200,10 @@ Bulk path:
 
 - keep using legacy `/process`
 
+Deactivate bulk path:
+
+- use `/process/commit`
+
 Current UI rules:
 
 - no operator / created-by field in the UI
@@ -205,8 +219,13 @@ Current UI rules:
 - Add Requester keeps bulk upload above a `Manual Entry` expander
 - Add Requester helper copy is:
   - `Upload a file for multiple requesters, or enter one requester below.`
+- processed results show full client name like `Markytech` in `BOD`
 - Dev Use is protected by a lightweight frontend sign-in gate before raw/debug tools are shown
 - Dev Use login constants currently live in `QA/frontend.py`
+- Add user-visible reviewed/results/export tables include `GENERATED PIN`
+- Deactivate user-visible reviewed/results/export tables do not include `GENERATED PIN`
+- Deactivate review tables do not rely on a final `NAME`; they use concise status messaging such as `Ready for deactivate`
+- Deactivate processed/results/export `NAME` shows only the real full human name, not `SEID Full Name`
 
 ## QA EC2 Deployment Snapshot
 
@@ -293,6 +312,10 @@ Backend/core is verified for:
 - review/commit parity for provided `Site ID` cases
 - payload-address preservation on new-site blank-`Site ID` commits
 - safe-subset auto-match for `Flat C` and `House 101`
+- same-run unique sequential TEID allocation for distinct new sites
+- same-run TEID reuse for repeated same new site
+- review/commit TEID parity for same-run new-site preview
+- deactivate bulk CSV/XLS/XLSX handling
 
 Recent live QA bulk proof:
 
@@ -343,3 +366,22 @@ Important project caveat:
 - deterministic PIN logic
 - API 2 as final existing/new-site authority
 - minimal changes over redesign
+- local SQLite audit/registry is supporting state only, not live QA business truth
+
+## Local Audit DB Retention
+
+- active local audit DB path:
+  - `QA/data/qa_irs_pin.db`
+- purpose:
+  - local audit trail
+  - batch history
+  - row-level tracking
+- it is not the source of truth for live create/deactivate/site/TEID decisions
+- automatic cleanup now removes old audit data
+- default retention:
+  - `7` days
+- env var:
+  - `QA_AUDIT_RETENTION_DAYS`
+- cleanup deletes:
+  - old `batch_audit` rows
+  - matching `stg_irs_pin_registry` rows for those batch ids

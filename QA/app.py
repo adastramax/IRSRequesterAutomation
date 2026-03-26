@@ -201,8 +201,26 @@ def _review_rows(request_rows: list[InputRowRequest], *, debug: bool) -> dict[st
     request_row_dicts = _request_rows_to_dicts(request_rows)
     parsed_rows = parse_input_records(request_row_dicts)
     site_cache: dict[str, list[str]] = {}
+    run_new_site_teids: dict[str, dict[str, str]] = {}
+    run_next_new_teid: dict[str, int] = {}
     results: list[dict[str, Any]] = []
     summary = {"total": len(parsed_rows), "Reviewed": 0, "Failed": 0, "Error": 0}
+
+    def assign_run_new_site_teid(customer_name: str, site_name: str, teid_resolution: dict[str, Any]) -> str:
+        site_key = " ".join(str(site_name).strip().lower().split())
+        customer_site_teids = run_new_site_teids.setdefault(customer_name, {})
+        if site_key in customer_site_teids:
+            return customer_site_teids[site_key]
+
+        current_max_teid = normalize_teid(teid_resolution.get("currentMaxTeid"))
+        if not current_max_teid:
+            raise ValueError("API 2 did not return currentMaxTeid for a new site review.")
+
+        next_teid = max(run_next_new_teid.get(customer_name, 0), int(current_max_teid) + 1)
+        assigned_teid = str(next_teid).zfill(4)
+        customer_site_teids[site_key] = assigned_teid
+        run_next_new_teid[customer_name] = next_teid + 1
+        return assigned_teid
 
     for input_row, row in zip(request_row_dicts, parsed_rows):
         notes = list(row.notes)
@@ -263,6 +281,11 @@ def _review_rows(request_rows: list[InputRowRequest], *, debug: bool) -> dict[st
                     teid_resolution = dict(site_resolution["teid_resolution"])
                     resolved_site_id = str(site_resolution["resolved_teid"])
                     notes.extend(str(note) for note in site_resolution["notes"])
+                    cached_run_teid = run_new_site_teids.get(corrected_bod, {}).get(" ".join(corrected_site_name.strip().lower().split()))
+                    if cached_run_teid:
+                        resolved_site_id = cached_run_teid
+                    elif not teid_resolution.get("siteExists"):
+                        resolved_site_id = assign_run_new_site_teid(corrected_bod, corrected_site_name, teid_resolution)
                     if site_resolution["strategy"] == "manual":
                         trace_logs.append(
                             {
@@ -359,6 +382,11 @@ def _review_rows(request_rows: list[InputRowRequest], *, debug: bool) -> dict[st
                             else next_new_site_pin(effective_teid)
                         )
                         suggested_connect_payload = build_create_payload(row, pin_context, generated_pin)
+                        commit_site_name = corrected_site_name
+                        commit_site_id = effective_teid
+                        if not row.site_id and not teid_resolution.get("siteExists"):
+                            commit_site_name = row.site_name
+                            commit_site_id = ""
                         suggested_commit_request = {
                             "rows": [
                                 {
@@ -366,8 +394,8 @@ def _review_rows(request_rows: list[InputRowRequest], *, debug: bool) -> dict[st
                                     "First Name": row.first_name,
                                     "Last Name": row.last_name,
                                     "SEID": row.seid,
-                                    "Site Name": corrected_site_name,
-                                    "Site ID": effective_teid,
+                                    "Site Name": commit_site_name,
+                                    "Site ID": commit_site_id,
                                     "Contact Status": row.contact_status,
                                     "Manual Site Name": "",
                                 }

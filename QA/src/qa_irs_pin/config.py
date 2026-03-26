@@ -11,6 +11,7 @@ DATA_DIR = QA_DIR / "data"
 INPUT_DIR = DATA_DIR / "input"
 OUTPUT_DIR = DATA_DIR / "output"
 DB_PATH = DATA_DIR / "qa_irs_pin.db"
+AUDIT_RETENTION_DAYS = int(os.getenv("QA_AUDIT_RETENTION_DAYS", "7"))
 
 EMAIL_DOMAIN = "ad-astrainc.com"
 DEFAULT_NATIVE_LANGUAGE = None

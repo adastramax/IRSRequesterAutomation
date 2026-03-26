@@ -29,6 +29,19 @@ def build_email(seid: str, first_name: str, last_name: str) -> str:
     return f"{local_part}@{EMAIL_DOMAIN}"
 
 
+def build_remapped_email(seid: str, first_name: str, last_name: str) -> str:
+    local_part = ".".join(
+        part
+        for part in (
+            sanitize_email_part(seid),
+            sanitize_email_part(first_name),
+            sanitize_email_part(last_name),
+        )
+        if part
+    )
+    return f"{local_part}@{EMAIL_DOMAIN}"
+
+
 def _build_profile_defaults(row, site_context: dict) -> dict:
     customer_name = str(site_context.get("accountName") or site_context.get("customerName") or "").strip()
     site_name = str(site_context.get("siteName") or row.site_name or "").strip()
@@ -68,12 +81,13 @@ def build_create_payload(row, site_context: dict, pin_code: str) -> dict:
     sub_customer_ids = defaults["sub_customer_ids"] or [fk_customer]
     if len(sub_customer_ids) == 1:
         sub_customer_ids = sub_customer_ids[0]
+    full_name = " ".join(part for part in (row.first_name.strip(), row.last_name.strip()) if part)
 
     return {
-        "firstName": row.first_name,
-        "lastName": row.last_name,
+        "firstName": row.seid,
+        "lastName": full_name,
         "phoneNumber": "",
-        "email": build_email(row.seid, row.first_name, row.last_name),
+        "email": build_remapped_email(row.seid, row.first_name, row.last_name),
         "fK_Gender": "",
         "fK_Customer": fk_customer,
         "fK_Location": fk_location if fk_location is not None else "",

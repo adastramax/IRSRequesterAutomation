@@ -151,6 +151,25 @@ def process_rows(
 
     with registry.get_connection(db_path) as connection:
         site_cache: dict[str, list[str]] = {}
+        run_new_site_teids: dict[str, dict[str, str]] = {}
+        run_next_new_teid: dict[str, int] = {}
+
+        def assign_run_new_site_teid(customer_name: str, site_name: str, teid_resolution: dict[str, object]) -> tuple[str, bool]:
+            site_key = normalize_site_name(site_name)
+            customer_site_teids = run_new_site_teids.setdefault(customer_name, {})
+            reused = site_key in customer_site_teids
+            if reused:
+                return customer_site_teids[site_key], True
+
+            current_max_teid = normalize_teid(teid_resolution.get("currentMaxTeid"))
+            if not current_max_teid:
+                raise ConnectAPIError("API 2 did not return currentMaxTeid for a new site.")
+
+            next_teid = max(run_next_new_teid.get(customer_name, 0), int(current_max_teid) + 1)
+            assigned_teid = str(next_teid).zfill(4)
+            customer_site_teids[site_key] = assigned_teid
+            run_next_new_teid[customer_name] = next_teid + 1
+            return assigned_teid, False
 
         for row in rows:
             row_notes = list(row.notes)
@@ -365,6 +384,16 @@ def process_rows(
                     teid_resolution = dict(site_resolution["teid_resolution"])
                     resolved_teid = str(site_resolution["resolved_teid"])
                     row_notes.extend(str(note) for note in site_resolution["notes"])
+                    cached_run_teid = run_new_site_teids.get(customer_name, {}).get(normalize_site_name(matched_site_name))
+                    if cached_run_teid:
+                        resolved_teid = cached_run_teid
+                        row_notes.append("Reused the same in-run TEID for a repeated new site.")
+                    elif not teid_resolution.get("siteExists"):
+                        resolved_teid, reused_run_teid = assign_run_new_site_teid(customer_name, matched_site_name, teid_resolution)
+                        if reused_run_teid:
+                            row_notes.append("Reused the same in-run TEID for a repeated new site.")
+                        else:
+                            row_notes.append("Assigned a unique in-run TEID for a new site.")
                     if site_resolution["strategy"] == "manual":
                         log("site_match", "Using manual site override", row_number=row.row_number, details={"matched_site_name": matched_site_name})
                     elif site_resolution["strategy"] == "existing":
@@ -410,8 +439,6 @@ def process_rows(
                     log("teid_resolution", "Resolved TEID state for canonical site", row_number=row.row_number, details={"matched_site_name": matched_site_name, "teid_resolution": teid_resolution})
                     if teid_resolution.get("siteExists"):
                         row_notes.append("Resolved TEID from existing QA site.")
-                    else:
-                        row_notes.append("Assigned new TEID from QA currentMaxTeid + 1.")
 
                     pin_context = client.get_pin_context(customer_name, resolved_teid)
                     if site_resolution_strategy == "new":

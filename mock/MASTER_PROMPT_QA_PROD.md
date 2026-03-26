@@ -53,6 +53,10 @@ Important constraints:
 - Replace mocked services with real HTTP client layers incrementally.
 - Do not assume fK_Location from source files; fetch it from API 1 in QA/prod.
 - Do not change the email domain or payload field spellings.
+- current QA add payload identity remap is:
+  - `firstName = SEID`
+  - `lastName = "<First Name> <Last Name>"`
+  - `email = "<SEID>.<First Name>.<Last Name>@ad-astrainc.com"` in lowercase
 
 Payload facts that must remain correct:
 - email domain: ad-astrainc.com
@@ -99,6 +103,15 @@ Current QA deployment snapshot to know before changing deployment behavior:
   - `cd /home/ubuntu/IRSRequesterAutomation && git pull origin develop`
 - deployment start command used:
   - `cd /home/ubuntu/IRSRequesterAutomation/QA && sudo docker compose up -d --build`
+
+Current QA behavior details to preserve:
+- Add bulk still uses legacy `/process`
+- Deactivate bulk uses `/process/commit`
+- distinct new sites in one run get unique sequential TEIDs
+- repeated same new site in one run reuses the same TEID
+- review and commit must match for same-run new-site TEID assignment
+- Add user-visible reviewed/results/export tables include `GENERATED PIN`
+- Deactivate user-visible reviewed/results/export tables do not include `GENERATED PIN`
 
 Expected implementation order:
 1. Read the PRD and master doc first.

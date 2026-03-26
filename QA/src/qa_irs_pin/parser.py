@@ -33,7 +33,8 @@ HEADER_ALIASES = {
     "contact status": "contact_status",
 }
 
-REQUIRED_FIELDS = ("last_name", "first_name", "seid", "site_name")
+ADD_REQUIRED_FIELDS = ("last_name", "first_name", "seid", "site_name")
+DEACTIVATE_REQUIRED_FIELDS = ("seid",)
 
 
 def normalize_header(value: str) -> str:
@@ -44,10 +45,10 @@ def normalize_value(value: str | None) -> str:
     return "" if value is None else str(value).strip()
 
 
-def normalize_contact_status(raw_status: str) -> tuple[str, bool]:
+def normalize_contact_status(raw_status: str, *, default_status: str = "Add") -> tuple[str, bool]:
     status = normalize_value(raw_status).lower()
     if not status:
-        return "Add", True
+        return default_status, True
     if "deactivat" in status:
         return "Deactivate", True
     if "add" in status:
@@ -66,7 +67,7 @@ def load_input_frame(input_path: Path) -> pd.DataFrame:
     return dataframe.fillna("")
 
 
-def parse_input_dataframe(dataframe: pd.DataFrame) -> list[ParsedRow]:
+def parse_input_dataframe(dataframe: pd.DataFrame, *, default_contact_status: str = "Add") -> list[ParsedRow]:
     if dataframe.empty and len(dataframe.columns) == 0:
         raise ValueError("Input data is missing a header row.")
 
@@ -85,11 +86,15 @@ def parse_input_dataframe(dataframe: pd.DataFrame) -> list[ParsedRow]:
             column: normalize_value(raw_row.get(column, ""))
             for column in dataframe.columns
         }
-        contact_status, status_is_valid = normalize_contact_status(normalized.get("contact_status", ""))
+        contact_status, status_is_valid = normalize_contact_status(
+            normalized.get("contact_status", ""),
+            default_status=default_contact_status,
+        )
         notes: list[str] = []
         error_fields: list[str] = []
 
-        for field_name in REQUIRED_FIELDS:
+        required_fields = DEACTIVATE_REQUIRED_FIELDS if contact_status == "Deactivate" else ADD_REQUIRED_FIELDS
+        for field_name in required_fields:
             if not normalized.get(field_name, ""):
                 error_fields.append(field_name)
 
@@ -139,11 +144,11 @@ def parse_input_dataframe(dataframe: pd.DataFrame) -> list[ParsedRow]:
     return rows
 
 
-def parse_input_records(records: list[dict]) -> list[ParsedRow]:
-    return parse_input_dataframe(pd.DataFrame(records).fillna(""))
+def parse_input_records(records: list[dict], *, default_contact_status: str = "Add") -> list[ParsedRow]:
+    return parse_input_dataframe(pd.DataFrame(records).fillna(""), default_contact_status=default_contact_status)
 
 
-def parse_input_bytes(filename: str, content: bytes) -> list[ParsedRow]:
+def parse_input_bytes(filename: str, content: bytes, *, default_contact_status: str = "Add") -> list[ParsedRow]:
     suffix = Path(filename).suffix.lower()
     if suffix == ".csv":
         dataframe = pd.read_csv(BytesIO(content), dtype=str)
@@ -151,8 +156,8 @@ def parse_input_bytes(filename: str, content: bytes) -> list[ParsedRow]:
         dataframe = pd.read_excel(BytesIO(content), dtype=str)
     else:
         raise ValueError(f"Unsupported input file type: {suffix}")
-    return parse_input_dataframe(dataframe.fillna(""))
+    return parse_input_dataframe(dataframe.fillna(""), default_contact_status=default_contact_status)
 
 
-def parse_input_file(path: str | Path) -> list[ParsedRow]:
-    return parse_input_dataframe(load_input_frame(Path(path)))
+def parse_input_file(path: str | Path, *, default_contact_status: str = "Add") -> list[ParsedRow]:
+    return parse_input_dataframe(load_input_frame(Path(path)), default_contact_status=default_contact_status)

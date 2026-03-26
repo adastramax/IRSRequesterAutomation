@@ -44,6 +44,7 @@ Current QA architecture:
 - one processor drives CLI, FastAPI, and Streamlit
 - live QA API client lives in QA/utils/client.py
 - local SQLite registry/audit is still active
+- local SQLite audit retention cleanup is active
 - Docker Compose is used for EC2 deployment
 - the active Streamlit UI has 3 pages:
   - Add Requester
@@ -106,6 +107,11 @@ Current frontend contract:
 - Add Requester helper copy should stay:
   - `Upload a file for multiple requesters, or enter one requester below.`
 - Deactivate Requester should keep the same clean button-row workflow as Add Requester
+- Deactivate Requester supports bulk CSV/XLS/XLSX upload through `/process/commit`
+- Add user-visible reviewed/results/export tables include `GENERATED PIN`
+- Deactivate user-visible reviewed/results/export tables must not include `GENERATED PIN`
+- Deactivate review rows should use concise message text like `Ready for deactivate` instead of relying on a final `NAME`
+- Deactivate processed/results/export `NAME` must show only the real full human name, not `SEID Full Name`
 - Dev Use is the only place where raw responses and debug payloads belong
 - Dev Use should stay relockable from the UI, and its login constants currently live in `QA/frontend.py`
 
@@ -152,10 +158,15 @@ Current verified behaviors to remember:
 - direct-site-ID canonical override
 - detail-first deactivate
 - bulk upload through Streamlit legacy /process
+- deactivate bulk CSV/XLS/XLSX through `/process/commit`
 - review/commit parity for provided Site ID cases
 - payload-address preservation on new-site blank-Site-ID commits
+- same-run unique sequential TEID allocation for distinct new sites
+- same-run TEID reuse for repeated same new site
+- review/commit TEID parity for same-run new-site preview
 - safe-subset auto-match for Flat C and House 101
 - differentiated Jacksonville variants remain differentiated
+- local audit DB keeps recent history only and prunes older audit data automatically
 
 Known bad record:
 - SEID: 346EDR24
@@ -170,6 +181,7 @@ When changing code:
 - use fresh SEIDs for create tests
 - do not hardcode old TEIDs as if QA state is static
 - report exact current SEID/GUID/TEID/PIN outcomes after testing
+- do not treat `QA/data/qa_irs_pin.db` as business truth; it is supporting audit state
 
 What not to do:
 - do not use the old mock directory as QA source of truth
