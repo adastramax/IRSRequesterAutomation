@@ -255,6 +255,25 @@ Current container/runtime mapping:
 - frontend host port `8520` -> container `8501`
 - this mirrors the proven QA shared-VM deployment pattern and is now locally smoke-tested for `LIVE-PROD`
 
+QA-style live deployment commands to preserve:
+
+- SSH to VM:
+  - `ssh -i "E:\ad-astra\jahangeer 1.pem" ubuntu@44.211.141.130`
+- stop QA first if reusing the same shared ports:
+  - `cd /home/ubuntu/IRSRequesterAutomation/QA && sudo docker compose down`
+- pull latest repo on VM:
+  - `cd /home/ubuntu/IRSRequesterAutomation && git pull origin develop`
+- deploy live from VM:
+  - `cd /home/ubuntu/IRSRequesterAutomation/LIVE-PROD && sudo docker compose up -d --build`
+- verify:
+  - `cd /home/ubuntu/IRSRequesterAutomation/LIVE-PROD && sudo docker compose ps`
+  - `curl http://127.0.0.1:8000/health`
+
+Expected shared-VM URLs:
+
+- frontend: `http://44.211.141.130:8520`
+- API: `http://44.211.141.130:8002`
+
 ## Modify-Function Change
 
 Current modify-function behavior:

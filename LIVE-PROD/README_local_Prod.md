@@ -125,6 +125,44 @@ Current local Docker proof:
 - local `docker compose ps` showed `live-prod-frontend-1` running on `0.0.0.0:8520->8501/tcp`
 - this confirms the live-prod folder is already containerized in the same practical shape used for QA deployment
 
+## Live VM Deployment Snapshot
+
+Current live deployment is intended to follow the same shared-VM pattern used in QA.
+
+VM baseline to reuse:
+
+- repo path on VM: `/home/ubuntu/IRSRequesterAutomation`
+- live app path on VM: `/home/ubuntu/IRSRequesterAutomation/LIVE-PROD`
+- shared host ports:
+  - API: `8002:8000`
+  - frontend: `8520:8501`
+
+Exact SSH command used in QA handoff style:
+
+- `ssh -i "E:\ad-astra\jahangeer 1.pem" ubuntu@44.211.141.130`
+
+Exact repo pull command to reuse:
+
+- `cd /home/ubuntu/IRSRequesterAutomation && git pull origin develop`
+
+Exact live deploy command to use:
+
+- `cd /home/ubuntu/IRSRequesterAutomation/LIVE-PROD && sudo docker compose up -d --build`
+
+If replacing QA on the same shared VM, stop QA first:
+
+- `cd /home/ubuntu/IRSRequesterAutomation/QA && sudo docker compose down`
+
+Recommended verification commands on the VM:
+
+- `cd /home/ubuntu/IRSRequesterAutomation/LIVE-PROD && sudo docker compose ps`
+- `curl http://127.0.0.1:8000/health`
+
+Expected public URLs when the live stack is running on the shared VM:
+
+- Streamlit frontend: `http://44.211.141.130:8520`
+- API: `http://44.211.141.130:8002`
+
 ## Live Proof Already Observed
 
 Demo-account proof:

@@ -177,6 +177,12 @@ Latest additional live proof already observed:
 - local docker smoke-test succeeded with the current `LIVE-PROD/docker-compose.yml` on:
   - API `8002:8000`
   - frontend `8520:8501`
+- QA-style VM deployment command pattern to preserve is:
+  - `ssh -i "E:\ad-astra\jahangeer 1.pem" ubuntu@44.211.141.130`
+  - `cd /home/ubuntu/IRSRequesterAutomation && git pull origin develop`
+  - `cd /home/ubuntu/IRSRequesterAutomation/LIVE-PROD && sudo docker compose up -d --build`
+  - if reusing the same shared ports, stop QA first with:
+    - `cd /home/ubuntu/IRSRequesterAutomation/QA && sudo docker compose down`
 
 When changing code:
 - inspect current code first
