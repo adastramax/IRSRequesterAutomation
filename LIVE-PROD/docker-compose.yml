@@ -1,0 +1,56 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: uvicorn app:app --host 0.0.0.0 --port 8000
+    environment:
+      CONNECT_AUTH_BASE: ${CONNECT_AUTH_BASE:-}
+      CONNECT_API_BASE: ${CONNECT_API_BASE:-}
+      CONNECT_SEARCH_BASE: ${CONNECT_SEARCH_BASE:-}
+      CONNECT_EMAIL: ${CONNECT_EMAIL:-}
+      CONNECT_PASSWORD: ${CONNECT_PASSWORD:-}
+      DEFAULT_PRECALL_POLICY: ${DEFAULT_PRECALL_POLICY:-}
+      REQUEST_TIMEOUT_SECONDS: ${REQUEST_TIMEOUT_SECONDS:-30}
+      SITE_MATCH_THRESHOLD: ${SITE_MATCH_THRESHOLD:-80}
+      DEV_USE_USERNAME: ${DEV_USE_USERNAME:-}
+      DEV_USE_PASSWORD: ${DEV_USE_PASSWORD:-}
+    ports:
+      - "8002:8000"
+    volumes:
+      - ./data:/app/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: streamlit run frontend.py --server.address 0.0.0.0 --server.port 8501
+    environment:
+      BACKEND_URL: http://api:8000
+      CONNECT_AUTH_BASE: ${CONNECT_AUTH_BASE:-}
+      CONNECT_API_BASE: ${CONNECT_API_BASE:-}
+      CONNECT_SEARCH_BASE: ${CONNECT_SEARCH_BASE:-}
+      CONNECT_EMAIL: ${CONNECT_EMAIL:-}
+      CONNECT_PASSWORD: ${CONNECT_PASSWORD:-}
+      DEFAULT_PRECALL_POLICY: ${DEFAULT_PRECALL_POLICY:-}
+      REQUEST_TIMEOUT_SECONDS: ${REQUEST_TIMEOUT_SECONDS:-30}
+      SITE_MATCH_THRESHOLD: ${SITE_MATCH_THRESHOLD:-80}
+      DEV_USE_USERNAME: ${DEV_USE_USERNAME:-}
+      DEV_USE_PASSWORD: ${DEV_USE_PASSWORD:-}
+    ports:
+      - "8520:8501"
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      api:
+        condition: service_healthy
+
+networks:
+  default:
+    name: irs_pin_live_local
