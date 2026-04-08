@@ -114,6 +114,8 @@ Latest live proof already observed:
 Current workbook/parser proof:
 - the SBSE LB export workbook format under `LIVE-PROD/data/input/` is accepted for:
   - `Requested Action` -> `contact_status`
+  - `PIN Action Required` -> `contact_status`
+  - `Current User PIN` -> `user_pin`
   - `Site:Location ID` -> `site_id`
   - `Site` -> `site_name`
   - `Employee ID` -> `employee_id`
@@ -122,11 +124,23 @@ Current workbook/parser proof:
 - action normalization currently accepts:
   - `Delete-Separated` -> `Deactivate`
   - `New PIN` -> `Add`
+- `Delete` -> `Deactivate`
+- `Switch to Ad Astra` -> workbook-driven modify-function translation
 - extra optional workbook columns can remain present and blank without breaking parsing
+- duplicate mapped action columns can coexist and are coalesced safely
+- blank filler rows that only repeat `TS FA` are skipped
+- only explicit 4-digit numeric TEIDs are accepted as `Site ID` / `New Site:Site ID`
+- alphanumeric site-code strings are treated as blank TEIDs and fall back to site-name resolution
+- current code accepts `TS FA` as the live `FA` alias
 - uploaded CSV rows can carry explicit `Customer Name`, and review-file now preserves it correctly
 - `Modify-Function Change` is now implemented in live-prod
 - `Employee ID`, `New Site:Site ID`, and `New Site` are now part of the live-prod action flow
 - `New Site:Function` is not yet part of the live-prod action flow
+- for IRS FA workbook rows marked `Switch to Ad Astra`, current code translates them into modify-function rows by:
+  - treating workbook `Site Name` as `New Site`
+  - deriving the old/current-site TEID from `Current User PIN`
+  - deriving the 5-digit employee id from the same current PIN
+  - keeping those rows in the Add Requester bulk workflow instead of filtering them out
 
 Bulk upload truth:
 - bulk review now uses `/process/review-file` with the original uploaded file
@@ -135,6 +149,9 @@ Bulk upload truth:
 - the earlier fresh-SEID bulk timeout issue was removed by avoiding export-sweep lookup in the primary runtime path
 - Add Requester bulk review now falls back to parsed-row review if the first raw-file review request returns a transient 400
 - Deactivate Requester bulk CSV review/commit now converts uploaded rows into explicit `Deactivate` requests before sending them to the backend
+- Add Requester bulk review/commit now keeps both `Add` and `Modify-Function Change` rows from mixed source files and skips true deactivate rows
+- bulk processed-results rendering now uses the commit response shape correctly instead of dropping row-level output after successful bulk uploads
+- processed results now show the returned 9-digit PIN for `Already Exists` rows when available
 
 Current modify-function truth:
 - modify-function is a composite flow: deactivate old/current site, then create at the new site
@@ -144,6 +161,8 @@ Current modify-function truth:
 - modify-function create email first tries `seid.firstname.lastname1@ad-astrainc.com`
 - if Connect rejects that email as already registered / duplicate email, create retries with suffix `2`, then suffix `3`
 - do not change normal Add email behavior when touching modify-function code
+- for workbook-driven `Switch to Ad Astra` rows, the operator-facing `Site Name` is the destination/new site, while the old/current site context is derived from `Current User PIN`
+- when touching UI/result rendering, do not show the old/current TEID beside the destination/new site on failed modify-function rows
 
 Latest additional live proof already observed:
 - live auth to `appbe.ad-astrainc.com` succeeded with the current working credentials already used in this project
@@ -183,6 +202,9 @@ Latest additional live proof already observed:
   - `cd /home/ubuntu/IRSRequesterAutomation/LIVE-PROD && sudo docker compose up -d --build`
   - if reusing the same shared ports, stop QA first with:
     - `cd /home/ubuntu/IRSRequesterAutomation/QA && sudo docker compose down`
+- latest real VM deployment also hit one git hygiene issue before pull:
+  - untracked `LIVE-PROD/.dockerignore` on the VM blocked merge
+  - clear or move that VM-local file if the same conflict appears again
 
 When changing code:
 - inspect current code first

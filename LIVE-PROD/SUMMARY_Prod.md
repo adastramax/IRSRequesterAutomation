@@ -50,6 +50,9 @@ Important current behavior:
 - mixed bulk files now preserve original actions and fields through backend parsing
 - Add Requester bulk review now falls back to parsed-row review if the first raw-file review request returns a transient 400
 - Deactivate Requester bulk CSV flow now rewrites uploaded rows into explicit `Deactivate` requests for both review and commit
+- Add Requester bulk review/commit now keeps both `Add` and `Modify-Function Change` rows from mixed source files and skips true deactivation rows
+- bulk processed-results rendering now uses the commit response shape correctly and no longer drops row-level output after successful bulk uploads
+- processed results now show the returned 9-digit PIN for `Already Exists` rows when available
 
 ## Contracts To Preserve
 
@@ -199,6 +202,8 @@ Current `LIVE-PROD` parser safely accepts the SBSE LB export workbook shape unde
 Confirmed normalized workbook headers:
 
 - `Requested Action` -> `contact_status`
+- `PIN Action Required` -> `contact_status`
+- `Current User PIN` -> `user_pin`
 - `Site:Location ID` -> `site_id`
 - `Site` -> `site_name`
 - `Employee ID` -> `employee_id`
@@ -209,11 +214,18 @@ Confirmed action normalization:
 
 - `Delete-Separated` -> `Deactivate`
 - `New PIN` -> `Add`
+- `Delete` -> `Deactivate`
+- `Switch to Ad Astra` -> workbook-driven modify-function translation
 
 Confirmed non-breaking behavior:
 
 - extra optional workbook columns can remain present and blank
 - uploaded CSV review now preserves explicit `Customer Name` values when present
+- duplicate mapped action columns are coalesced safely
+- blank filler rows that only repeat `TS FA` are skipped instead of becoming fake error rows
+- only explicit 4-digit numeric TEIDs are accepted as `Site ID` / `New Site:Site ID`
+- alphanumeric site-code strings are treated as blank TEIDs and fall back to site-name resolution
+- `TS FA` is accepted as the live `FA` alias in current code
 
 Current workbook limitation:
 
@@ -225,6 +237,11 @@ Current supported workbook action:
 - `Modify-Function Change` is now implemented in live-prod
 - the processing flow now uses `Employee ID`, `New Site:Site ID`, and `New Site`
 - `New Site:Function` is not yet part of the live-prod action flow
+- for IRS FA workbook rows marked `Switch to Ad Astra`, current code translates them into modify-function rows by:
+  - treating workbook `Site Name` as `New Site`
+  - deriving the old/current-site TEID from `Current User PIN`
+  - deriving the 5-digit employee id from the same current PIN
+  - keeping those rows in the Add Requester bulk workflow
 
 ## Config And Deployment
 
@@ -273,6 +290,15 @@ Expected shared-VM URLs:
 
 - frontend: `http://44.211.141.130:8520`
 - API: `http://44.211.141.130:8002`
+
+Latest shared-VM deployment proof:
+
+- QA containers were intentionally shut down first so `LIVE-PROD` could reuse the same shared ports
+- `git pull origin develop` on the VM initially failed because an untracked `LIVE-PROD/.dockerignore` would have been overwritten
+- after clearing that VM-local conflict, the repo updated successfully
+- `LIVE-PROD` was then started on the VM with:
+  - `cd /home/ubuntu/IRSRequesterAutomation/LIVE-PROD && sudo docker compose up -d --build`
+- operator confirmed the live deployment is working
 
 ## Modify-Function Change
 

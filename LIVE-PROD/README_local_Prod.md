@@ -163,6 +163,19 @@ Expected public URLs when the live stack is running on the shared VM:
 - Streamlit frontend: `http://44.211.141.130:8520`
 - API: `http://44.211.141.130:8002`
 
+Latest VM deployment proof:
+
+- QA stack was stopped on the shared VM with:
+  - `cd /home/ubuntu/IRSRequesterAutomation/QA && sudo docker compose down`
+- repo was updated on the VM from:
+  - `cd /home/ubuntu/IRSRequesterAutomation && git pull origin develop`
+- one VM-specific merge blocker occurred before pull:
+  - untracked file `LIVE-PROD/.dockerignore` blocked `git pull`
+  - the VM-local conflicting file had to be moved/cleared so the repo-tracked `LIVE-PROD/.dockerignore` could land
+- live stack was then started from:
+  - `cd /home/ubuntu/IRSRequesterAutomation/LIVE-PROD && sudo docker compose up -d --build`
+- operator confirmed the live stack came up successfully on the VM
+
 ## Live Proof Already Observed
 
 Demo-account proof:
@@ -238,6 +251,10 @@ Latest local UI/runtime proof:
 - the deactivate bulk page no longer sends the uploaded file through the generic add/create `/process` path
 - deactivate bulk review/results tables now use deactivate-specific columns and messages
 - the frontend badge now shows `LIVE` in white on green instead of `QA`
+- Add Requester bulk review/commit now filters mixed-action source files to Add plus modify-function rows and skips true deactivate rows
+- bulk processed-results rendering now uses the commit response shape correctly, so successful bulk uploads show row-level outcomes instead of an empty processed-results table
+- processed results now surface the 9-digit PIN for `Already Exists` rows when the backend returns it
+- modify-function row rendering no longer shows a mismatched old/current TEID next to the destination/new site name on failure
 
 ## Workbook Compatibility
 
@@ -246,6 +263,8 @@ Current `LIVE-PROD` parser compatibility accepts the SBSE LB export workbook sha
 Confirmed normalized headers:
 
 - `Requested Action` -> `contact_status`
+- `PIN Action Required` -> `contact_status`
+- `Current User PIN` -> `user_pin`
 - `Site:Location ID` -> `site_id`
 - `Site` -> `site_name`
 - `Employee ID` -> `employee_id`
@@ -256,6 +275,18 @@ Confirmed action normalization:
 
 - `Delete-Separated` -> `Deactivate`
 - `New PIN` -> `Add`
+- `Delete` -> `Deactivate`
+- `Switch to Ad Astra` -> workbook-driven modify-function translation
+
+Confirmed IRS FA workbook compatibility:
+
+- `TS FA` is accepted as an alias for live `FA`
+- `Site ID` / `New Site:Site ID` are only accepted when they are explicit 4-digit numeric TEIDs
+- alphanumeric site-code strings such as `IRS_TS_FA_A1_G121_Providence` are treated as blank TEIDs and the flow falls back to site-name resolution
+- duplicate mapped action columns are coalesced safely, so `Contact Status` and `PIN Action Required` can coexist in the workbook without corrupting action parsing
+- blank filler rows that only repeat `TS FA` are skipped instead of becoming fake error rows
+- the Add page now includes both `Add` rows and `Switch to Ad Astra` rows, and skips only true deactivation rows from the same source file
+- the Deactivate page keeps only true deactivation rows from mixed source files
 
 Extra optional workbook columns are ignored safely when present and blank.
 
@@ -269,6 +300,11 @@ Current supported workbook case:
 - `Modify-Function Change` is now mapped/implemented
 - `Employee ID`, `New Site:Site ID`, and `New Site` are now part of the live-prod action flow
 - `New Site:Function` is not yet part of the live-prod action flow
+- for IRS FA workbook rows marked `Switch to Ad Astra`, current code translates them into modify-function rows by:
+  - treating workbook `Site Name` as `New Site`
+  - deriving the old/current-site TEID from `Current User PIN`
+  - deriving the 5-digit employee id from the same current PIN
+  - keeping those rows in the Add Requester bulk workflow rather than filtering them out
 
 ## Bulk Upload Reality
 
@@ -280,6 +316,7 @@ Bulk upload is now much closer to the single-entry backend flow:
 - client-shaped CSVs with `Customer Name`, `Employee ID`, `New Site:Site ID`, and `New Site` are now proven end-to-end in the real bulk path
 - Add Requester bulk review keeps the raw-file review path first, but falls back to parsed-row review if the raw-file request returns a transient first-click 400
 - Deactivate Requester bulk review/commit intentionally rewrites uploaded rows into explicit `Deactivate` requests so uploaded `New PIN` or mixed-action source files are not accidentally reprocessed as adds during deactivate operations
+- Add Requester bulk review/commit now works from parser-normalized rows so mixed IRS FA workbooks can safely keep Add plus modify-function rows while excluding true deactivate rows
 
 For a very small, clean IRS bulk file, it now follows the same parsing truth as single-entry processing. The earlier live timeout issue on fresh demo-account bulk adds was removed by eliminating export-sweep lookup from the primary add/deactivate/modify paths.
 
@@ -295,6 +332,8 @@ Current live modify-function behavior:
 - if Connect rejects that email as already registered / duplicate email, create retries with suffix `2`, then suffix `3`
 - normal Add email generation is unchanged
 - current safe retry cap for modify-function email suffixing is `3`
+- for workbook-driven `Switch to Ad Astra` rows, the operator-facing `Site Name` is the destination/new site, while the old/current site context is derived from `Current User PIN`
+- modify-function review may therefore show the destination/new-site match while current-site lookup still depends on the old/current PIN-derived TEID being found as an active requester in live
 
 ## Verification Notes
 

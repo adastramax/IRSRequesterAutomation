@@ -16,7 +16,7 @@ from qa_irs_pin.config import (
     CONNECT_SEARCH_BASE,
     REQUEST_TIMEOUT_SECONDS,
 )
-from utils.helpers import coerce_form_value, extract_teid_from_pin, normalize_teid, normalize_text
+from utils.helpers import coerce_form_value, extract_teid_from_pin, normalize_pin_value, normalize_teid, normalize_text
 
 
 class ConnectAPIError(RuntimeError):
@@ -293,6 +293,7 @@ class ConnectQAClient:
                 seid,
                 customer_ids=customer_ids,
                 active_only=active_only,
+                items_per_page=items_per_page,
             )
             if member_matches:
                 return self._enrich_member_matches(member_matches)
@@ -337,6 +338,28 @@ class ConnectQAClient:
             items_per_page=items_per_page,
         ):
             if normalize_text(row.get("code")) == target_guid:
+                return self._serialize_export_row(row)
+        return None
+
+    def get_export_requester_by_pin(
+        self,
+        pin: str,
+        *,
+        customer_ids: list[int] | None = None,
+        active_only: bool = False,
+        items_per_page: int = 100,
+    ) -> dict[str, Any] | None:
+        target_pin = normalize_pin_value(pin)
+        if not target_pin:
+            return None
+
+        for row in self._iterate_export_rows(
+            customer_ids=customer_ids,
+            active_only=active_only,
+            items_per_page=items_per_page,
+        ):
+            row_pin = normalize_pin_value(row.get("pinCodeString") or row.get("pinCode"))
+            if row_pin == target_pin:
                 return self._serialize_export_row(row)
         return None
 
@@ -389,7 +412,7 @@ class ConnectQAClient:
             raw_response=body,
         )
 
-    def deactivate_user(self, payload: dict[str, Any]) -> ConnectMutationResult:
+    def update_user(self, payload: dict[str, Any]) -> ConnectMutationResult:
         form_pairs: list[tuple[str, str]] = []
         for key, value in payload.items():
             if isinstance(value, list):
@@ -403,6 +426,12 @@ class ConnectQAClient:
         return ConnectMutationResult(
             success=success,
             guid=normalize_text(body.get("result")) or normalize_text(payload.get("Code")) or None,
-            message=normalize_text(body.get("text")) or ("Successfully deactivated" if success else "Deactivate failed."),
+            message=normalize_text(body.get("text")) or ("Successfully updated" if success else "Update failed."),
             raw_response=body,
         )
+
+    def deactivate_user(self, payload: dict[str, Any]) -> ConnectMutationResult:
+        result = self.update_user(payload)
+        if not result.message or result.message == "Successfully updated":
+            result.message = "Successfully deactivated" if result.success else "Deactivate failed."
+        return result

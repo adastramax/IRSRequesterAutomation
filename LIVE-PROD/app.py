@@ -53,6 +53,7 @@ class InputRowRequest(BaseModel):
     seid: str = Field(default="", alias="SEID", description="Unique requester SEID.")
     site_name: str = Field(default="", alias="Site Name", description="Input or corrected canonical site name.")
     site_id: str = Field(default="", alias="Site ID", description="TEID/site id. Leave blank to resolve from site name.")
+    user_pin: str = Field(default="", alias="Current User PIN", description="Existing requester PIN used to derive old/current TEID and employee id for modify-function requests.")
     employee_id: str = Field(default="", alias="Employee ID", description="Existing 5-digit employee id used for modify-function requests.")
     new_site_id: str = Field(default="", alias="New Site:Site ID", description="Destination TEID for modify-function requests.")
     new_site_name: str = Field(default="", alias="New Site", description="Destination site name for modify-function requests.")
@@ -373,7 +374,7 @@ def _review_rows(request_rows: list[InputRowRequest], *, debug: bool) -> dict[st
                         notes.append("If Connect rejects that PIN as already existing, commit will retry once using the current max-PIN rule.")
 
                     modify_function = {
-                        "old_site_name": row.site_name,
+                        "old_site_name": row.site_name if current_site_id else "",
                         "old_site_id": current_site_id or row.site_id,
                         "new_site_name": destination_site_name,
                         "new_site_id": destination_teid,
@@ -669,6 +670,7 @@ async def process_review_file(
                 "SEID": row.seid,
                 "Site Name": row.site_name,
                 "Site ID": row.site_id,
+                "Current User PIN": row.user_pin,
                 "Employee ID": row.employee_id,
                 "New Site:Site ID": row.new_site_id,
                 "New Site": row.new_site_name,

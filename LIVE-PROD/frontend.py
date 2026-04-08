@@ -50,6 +50,7 @@ def ensure_state() -> None:
         "bulk_preview_rows": [],
         "bulk_review_result": None,
         "bulk_result": None,
+        "bulk_filter_notice": "",
         "bulk_uploader_version": 0,
         "deactivate_request": None,
         "deactivate_ready": None,
@@ -65,6 +66,7 @@ def ensure_state() -> None:
         "deactivate_bulk_preview_rows": [],
         "deactivate_bulk_review_result": None,
         "deactivate_bulk_result": None,
+        "deactivate_bulk_filter_notice": "",
         "deactivate_bulk_uploader_version": 0,
         "deactivate_reset_requested": False,
         "dev_mode": "Enter Manually",
@@ -417,6 +419,7 @@ def parsed_row_to_request_dict(row: ParsedRow) -> dict[str, Any]:
         "SEID": row.seid,
         "Site Name": row.site_name,
         "Site ID": row.site_id,
+        "Current User PIN": row.user_pin,
         "Employee ID": row.employee_id,
         "New Site:Site ID": row.new_site_id,
         "New Site": row.new_site_name,
@@ -456,15 +459,49 @@ def deactivate_bulk_row(raw_row: ParsedRow) -> dict[str, str]:
     return deactivate_row(raw_row.bod, raw_row.seid, raw_row.site_name, raw_row.site_id, raw_row.first_name, raw_row.last_name)
 
 
+def filter_rows_for_action(rows: list[ParsedRow], action: str) -> tuple[list[ParsedRow], str]:
+    allowed_actions = {action}
+    action_label = "Add" if action == "Add" else "Deactivate"
+    if action == "Add":
+        allowed_actions.add("Modify-Function Change")
+        action_label = "Add / Modify"
+
+    filtered_rows = [row for row in rows if row.contact_status in allowed_actions]
+    skipped_rows = [row for row in rows if row.contact_status not in allowed_actions]
+    if not skipped_rows:
+        return filtered_rows, ""
+
+    skipped_actions = sorted({row.contact_status or "Blank" for row in skipped_rows})
+    return filtered_rows, (
+        f"Using only {action_label} rows from the uploaded file. "
+        f"Skipped {len(skipped_rows)} row(s) with action(s): {', '.join(skipped_actions)}."
+    )
+
+
+def _raise_for_status_with_detail(response: requests.Response) -> None:
+    if response.ok:
+        return
+    detail = ""
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = {}
+    if isinstance(payload, dict):
+        detail = str(payload.get("detail") or "").strip()
+    if detail:
+        raise requests.HTTPError(f"{response.status_code} {response.reason}: {detail}", response=response)
+    response.raise_for_status()
+
+
 def post_review(row: dict[str, Any]) -> dict[str, Any]:
     r = requests.post(f"{BACKEND_URL}/process/review", json={"rows": [row], "write_output": False, "debug": True}, timeout=300)
-    r.raise_for_status()
+    _raise_for_status_with_detail(r)
     return r.json()
 
 
 def post_bulk_review(rows: list[dict[str, Any]]) -> dict[str, Any]:
     r = requests.post(f"{BACKEND_URL}/process/review", json={"rows": rows, "write_output": False, "debug": True}, timeout=300)
-    r.raise_for_status()
+    _raise_for_status_with_detail(r)
     return r.json()
 
 
@@ -475,13 +512,13 @@ def post_bulk_review_file(uploaded_file) -> dict[str, Any]:
         files={"file": (uploaded_file.name, uploaded_file.getvalue(), uploaded_file.type or "application/octet-stream")},
         timeout=300,
     )
-    r.raise_for_status()
+    _raise_for_status_with_detail(r)
     return r.json()
 
 
 def post_commit(payload: dict[str, Any]) -> dict[str, Any]:
     r = requests.post(f"{BACKEND_URL}/process/commit", json=payload, timeout=300)
-    r.raise_for_status()
+    _raise_for_status_with_detail(r)
     return r.json()
 
 
@@ -493,7 +530,7 @@ def commit_from_review(review: dict[str, Any], fallback_row: dict[str, Any]) -> 
 
 def post_file(uploaded_file) -> dict[str, Any]:
     r = requests.post(f"{BACKEND_URL}/process", data={"write_output": "true"}, files={"file": (uploaded_file.name, uploaded_file.getvalue(), uploaded_file.type or "application/octet-stream")}, timeout=300)
-    r.raise_for_status()
+    _raise_for_status_with_detail(r)
     return r.json()
 
 
@@ -516,6 +553,44 @@ def processed_result_row(*, bod: Any, site_name: Any, teid: Any, seid: Any, name
         "MESSAGE": message or "",
         "GENERATED PIN": generated_pin or "",
     }
+
+
+def commit_result_pin(result: dict[str, Any], connect_payload: dict[str, Any] | None = None) -> str:
+    connect_payload = connect_payload or {}
+    for value in (
+        result.get("pin"),
+        result.get("generated_pin"),
+        connect_payload.get("pinCodeString"),
+        connect_payload.get("PinCodeString"),
+        connect_payload.get("pinCode"),
+        connect_payload.get("PinCode"),
+    ):
+        normalized = str(value or "").strip()
+        if normalized:
+            return normalized
+    return ""
+
+
+def commit_result_site_and_teid(input_row: dict[str, Any], corrected: dict[str, Any], output: dict[str, Any]) -> tuple[str, str]:
+    action = str(input_row.get("Contact Status", "")).strip()
+    modify = corrected.get("modify_function") or {}
+
+    if action == "Modify-Function Change":
+        site_name = (
+            output.get("posted_payload_address")
+            or modify.get("new_site_name")
+            or input_row.get("New Site")
+            or corrected.get("corrected_site_name")
+            or input_row.get("Site Name", "")
+        )
+        teid = ""
+        if str(output.get("status", "")).strip() in {"Created", "Already Exists", "Manual Intervention Required"}:
+            teid = output.get("teid") or modify.get("new_site_id") or ""
+        return clean_site(site_name), teid
+
+    site_name = output.get("posted_payload_address") or corrected.get("corrected_site_name") or input_row.get("Site Name", "")
+    teid = output.get("teid", "")
+    return clean_site(site_name), teid
 
 
 def empty_processed_results_df() -> pd.DataFrame:
@@ -545,8 +620,10 @@ def render_add_commit(commit: dict[str, Any], row: dict[str, Any]) -> None:
     c = first_result(commit)
     corrected = c.get("corrected_data") or {}
     result = c.get("result") or {}
+    connect_payload = c.get("connect_payload") or {}
+    site_name, teid = commit_result_site_and_teid(c.get("input") or row, corrected, result)
     status = str(result.get("status", "")).strip()
-    fields = [("BOD", corrected.get("corrected_bod") or row.get("BOD")), ("Requester Name", requester_name(row)), ("SEID", row.get("SEID")), ("Site", clean_site(result.get("posted_payload_address")) or clean_site(corrected.get("corrected_site_name")) or row.get("Site Name")), ("TEID", result.get("teid")), ("Generated PIN", result.get("pin"))]
+    fields = [("BOD", corrected.get("corrected_bod") or row.get("BOD")), ("Requester Name", requester_name(row)), ("SEID", row.get("SEID")), ("Site", site_name), ("TEID", teid), ("Generated PIN", commit_result_pin(result, connect_payload))]
     message = str(result.get("message", "")).strip() or "The request finished without a detailed message."
     if status == "Created":
         status_card("Created successfully", message, "success", fields)
@@ -559,13 +636,24 @@ def render_add_commit(commit: dict[str, Any], row: dict[str, Any]) -> None:
 
 def render_bulk_result(result: dict[str, Any], preview_rows: list[ParsedRow]) -> None:
     summary = result.get("summary") or {}
+    preview_actions = {str(row.contact_status or "").strip() for row in preview_rows}
+    has_modify_rows = "Modify-Function Change" in preview_actions
+    has_deactivate_rows = "Deactivate" in preview_actions
+    deactivated_title = "Deactivated"
+    deactivated_caption = "Requesters deactivated"
+    if has_modify_rows and not has_deactivate_rows:
+        deactivated_title = "Modify Steps"
+        deactivated_caption = "Current sites deactivated during modify changes"
     metric_cards([
         ("Total rows", summary.get("total", len(preview_rows)), "Rows received"),
         ("Created", summary.get("Created", summary.get("created", 0)), "Requesters created"),
-        ("Deactivated", summary.get("Deactivated", summary.get("deactivated", 0)), "Requesters deactivated"),
+        (deactivated_title, summary.get("Deactivated", summary.get("deactivated", 0)), deactivated_caption),
         ("Failed", summary.get("Failed", summary.get("failed", 0)), "Rows not completed"),
     ])
-    df = build_raw_processed_results_table(result, preview_rows)
+    if result.get("results") is not None:
+        df = build_commit_results_table(result)
+    else:
+        df = build_raw_processed_results_table(result, preview_rows)
     heading("Processed results", "Review row-level outcomes without raw logs.")
     render_clean_results_table(df)
     if not df.empty:
@@ -669,16 +757,18 @@ def build_commit_results_table(commit_result: dict[str, Any]) -> pd.DataFrame:
         input_row = result.get("input") or {}
         corrected = result.get("corrected_data") or {}
         output = result.get("result") or {}
+        connect_payload = result.get("connect_payload") or {}
+        site_name, teid = commit_result_site_and_teid(input_row, corrected, output)
         rows.append(
             processed_result_row(
                 bod=corrected.get("corrected_bod") or input_row.get("BOD", ""),
-                site_name=output.get("posted_payload_address") or corrected.get("corrected_site_name") or input_row.get("Site Name", ""),
-                teid=output.get("teid", ""),
+                site_name=site_name,
+                teid=teid,
                 seid=input_row.get("SEID", ""),
                 name=f"{input_row.get('First Name', '').strip()} {input_row.get('Last Name', '').strip()}".strip(),
                 status=output.get("status", ""),
                 message=output.get("message", ""),
-                generated_pin=output.get("pin", ""),
+                generated_pin=commit_result_pin(output, connect_payload),
             )
         )
     return pd.DataFrame(rows, columns=processed_result_columns()) if rows else empty_processed_results_df()
@@ -770,6 +860,7 @@ def render_add_requester_page() -> None:
         st.session_state.bulk_preview_rows = []
         st.session_state.bulk_review_result = None
         st.session_state.bulk_result = None
+        st.session_state.bulk_filter_notice = ""
         st.session_state.bulk_uploader_version += 1
         st.session_state.add_reset_requested = False
 
@@ -834,34 +925,20 @@ def render_add_requester_page() -> None:
                             st.session_state.bulk_file_name,
                             st.session_state.bulk_file_bytes,
                         )
-                        st.session_state.bulk_preview_rows = parsed_rows
-                        class UploadedFileProxy:
-                            def __init__(self, name: str, data: bytes, file_type: str) -> None:
-                                self.name = name
-                                self._data = data
-                                self.type = file_type
-
-                            def getvalue(self) -> bytes:
-                                return self._data
-
-                        proxy = UploadedFileProxy(
-                            st.session_state.bulk_file_name,
-                            st.session_state.bulk_file_bytes,
-                            st.session_state.bulk_file_type,
+                        filtered_rows, filter_notice = filter_rows_for_action(parsed_rows, "Add")
+                        if not filtered_rows:
+                            raise ValueError("No Add rows were found in the uploaded file.")
+                        st.session_state.bulk_preview_rows = filtered_rows
+                        st.session_state.bulk_filter_notice = filter_notice
+                        st.session_state.bulk_review_result = post_bulk_review(
+                            [parsed_row_to_request_dict(row) for row in filtered_rows]
                         )
-                        try:
-                            st.session_state.bulk_review_result = post_bulk_review_file(proxy)
-                        except requests.RequestException:
-                            # Fall back to the already parsed row payload if the raw-file review
-                            # request returns a transient 400 on the first click.
-                            st.session_state.bulk_review_result = post_bulk_review(
-                                [parsed_row_to_request_dict(row) for row in parsed_rows]
-                            )
                         st.session_state.bulk_result = None
                     st.rerun()
                 except Exception as exc:  # noqa: BLE001
                     st.session_state.bulk_preview_rows = []
                     st.session_state.bulk_review_result = None
+                    st.session_state.bulk_filter_notice = ""
                     st.error(f"Could not review the file: {exc}")
             else:
                 st.session_state.add_active_workflow = "manual"
@@ -886,24 +963,28 @@ def render_add_requester_page() -> None:
             if active_mode == "bulk" and has_bulk_file:
                 try:
                     st.session_state.add_active_workflow = "bulk"
-                    class UploadedFileProxy:
-                        def __init__(self, name: str, data: bytes, file_type: str) -> None:
-                            self.name = name
-                            self._data = data
-                            self.type = file_type
-
-                        def getvalue(self) -> bytes:
-                            return self._data
-
                     with st.spinner("Uploading file to Connect..."):
-                        proxy = UploadedFileProxy(
-                            st.session_state.bulk_file_name,
-                            st.session_state.bulk_file_bytes,
-                            st.session_state.bulk_file_type,
+                        rows = st.session_state.bulk_preview_rows
+                        if not rows:
+                            parsed_rows = parse_input_bytes(
+                                st.session_state.bulk_file_name,
+                                st.session_state.bulk_file_bytes,
+                            )
+                            rows, filter_notice = filter_rows_for_action(parsed_rows, "Add")
+                            if not rows:
+                                raise ValueError("No Add rows were found in the uploaded file.")
+                            st.session_state.bulk_preview_rows = rows
+                            st.session_state.bulk_filter_notice = filter_notice
+                        st.session_state.bulk_result = post_commit(
+                            {
+                                "rows": [parsed_row_to_request_dict(row) for row in rows],
+                                "created_by": "IRS PIN Operator",
+                                "write_output": False,
+                                "debug": False,
+                            }
                         )
-                        st.session_state.bulk_result = post_file(proxy)
                     st.rerun()
-                except requests.RequestException as exc:
+                except (requests.RequestException, ValueError) as exc:
                     st.error(f"Bulk processing failed: {exc}")
             else:
                 try:
@@ -921,6 +1002,8 @@ def render_add_requester_page() -> None:
     with result_container:
         if st.session_state.bulk_preview_rows:
             metric_cards([("Rows detected", len(st.session_state.bulk_preview_rows), "Ready for upload")])
+            if st.session_state.bulk_filter_notice:
+                st.info(st.session_state.bulk_filter_notice)
             with st.expander("See reviewed rows", expanded=False):
                 review_df = build_bulk_review_table(st.session_state.bulk_review_result) if st.session_state.bulk_review_result else build_bulk_preview_table(st.session_state.bulk_preview_rows)
                 render_clean_results_table(review_df)
@@ -954,6 +1037,7 @@ def render_deactivate_requester_page() -> None:
         st.session_state.deactivate_bulk_preview_rows = []
         st.session_state.deactivate_bulk_review_result = None
         st.session_state.deactivate_bulk_result = None
+        st.session_state.deactivate_bulk_filter_notice = ""
         st.session_state.deactivate_bulk_uploader_version += 1
         st.session_state.deactivate_reset_requested = False
 
@@ -1010,14 +1094,19 @@ def render_deactivate_requester_page() -> None:
                             st.session_state.deactivate_bulk_file_name,
                             st.session_state.deactivate_bulk_file_bytes,
                         )
-                        st.session_state.deactivate_bulk_preview_rows = parsed_rows
-                        deactivate_rows = [parsed_row_to_deactivate_request_dict(row) for row in parsed_rows]
+                        filtered_rows, filter_notice = filter_rows_for_action(parsed_rows, "Deactivate")
+                        if not filtered_rows:
+                            raise ValueError("No Delete/Deactivate rows were found in the uploaded file.")
+                        st.session_state.deactivate_bulk_preview_rows = filtered_rows
+                        st.session_state.deactivate_bulk_filter_notice = filter_notice
+                        deactivate_rows = [parsed_row_to_deactivate_request_dict(row) for row in filtered_rows]
                         st.session_state.deactivate_bulk_review_result = post_bulk_review(deactivate_rows)
                         st.session_state.deactivate_bulk_result = None
                     st.rerun()
                 except Exception as exc:  # noqa: BLE001
                     st.session_state.deactivate_bulk_preview_rows = []
                     st.session_state.deactivate_bulk_review_result = None
+                    st.session_state.deactivate_bulk_filter_notice = ""
                     st.error(f"Could not review the file: {exc}")
             else:
                 st.session_state.deactivate_active_workflow = "manual"
@@ -1037,11 +1126,15 @@ def render_deactivate_requester_page() -> None:
                     with st.spinner("Deactivating uploaded rows..."):
                         rows = st.session_state.deactivate_bulk_preview_rows
                         if not rows:
-                            rows = parse_input_bytes(
+                            parsed_rows = parse_input_bytes(
                                 st.session_state.deactivate_bulk_file_name,
                                 st.session_state.deactivate_bulk_file_bytes,
                             )
+                            rows, filter_notice = filter_rows_for_action(parsed_rows, "Deactivate")
+                            if not rows:
+                                raise ValueError("No Delete/Deactivate rows were found in the uploaded file.")
                             st.session_state.deactivate_bulk_preview_rows = rows
+                            st.session_state.deactivate_bulk_filter_notice = filter_notice
                         st.session_state.deactivate_bulk_result = post_commit(
                             {
                                 "rows": [parsed_row_to_deactivate_request_dict(row) for row in rows],
@@ -1051,7 +1144,7 @@ def render_deactivate_requester_page() -> None:
                             }
                         )
                     st.rerun()
-                except requests.RequestException as exc:
+                except (requests.RequestException, ValueError) as exc:
                     st.error(f"Bulk deactivation failed: {exc}")
             else:
                 st.session_state.deactivate_active_workflow = "manual"
@@ -1071,6 +1164,8 @@ def render_deactivate_requester_page() -> None:
     with result_container:
         if st.session_state.deactivate_bulk_preview_rows:
             metric_cards([("Rows detected", len(st.session_state.deactivate_bulk_preview_rows), "Ready for upload")])
+            if st.session_state.deactivate_bulk_filter_notice:
+                st.info(st.session_state.deactivate_bulk_filter_notice)
             with st.expander("See reviewed rows", expanded=False):
                 review_df = (
                     build_deactivate_bulk_review_table(st.session_state.deactivate_bulk_review_result)
@@ -1083,7 +1178,7 @@ def render_deactivate_requester_page() -> None:
             summary = st.session_state.deactivate_bulk_result.get("summary") or {}
             metric_cards([
                 ("Total rows", summary.get("total", len(st.session_state.deactivate_bulk_preview_rows)), "Rows received"),
-                ("Created", summary.get("Created", summary.get("created", 0)), "Requesters created"),
+                ("Created", summary.get("Created", summary.get("created", 0)), "Unexpected creates"),
                 ("Deactivated", summary.get("Deactivated", summary.get("deactivated", 0)), "Requesters deactivated"),
                 ("Failed", summary.get("Failed", summary.get("failed", 0)), "Rows not completed"),
             ])

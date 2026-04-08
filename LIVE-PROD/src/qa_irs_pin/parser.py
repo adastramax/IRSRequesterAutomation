@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from io import BytesIO
 from pathlib import Path
+import re
 
 import pandas as pd
 
 from .models import ParsedRow
+from utils.helpers import extract_employee_id_from_pin, extract_teid_from_pin
 
 HEADER_ALIASES = {
     "bod": "bod",
@@ -38,15 +40,32 @@ HEADER_ALIASES = {
     "new site:location id": "new_site_id",
     "new site": "new_site_name",
     "new site name": "new_site_name",
+    "current user pin": "user_pin",
     "9-digit user pin": "user_pin",
     "9 digit user pin": "user_pin",
     "user pin": "user_pin",
+    "pin action required": "contact_status",
     "contact status": "contact_status",
+    "comments": "comments",
+    "comments (if needed)": "comments",
 }
 
 ADD_REQUIRED_FIELDS = ("last_name", "first_name", "seid", "site_name")
 DEACTIVATE_REQUIRED_FIELDS = ("seid",)
 MODIFY_FUNCTION_REQUIRED_FIELDS = ("last_name", "first_name", "seid", "site_name", "employee_id", "new_site_name")
+MEANINGFUL_ROW_FIELDS = (
+    "last_name",
+    "first_name",
+    "seid",
+    "site_id",
+    "site_name",
+    "manual_site_name",
+    "user_pin",
+    "employee_id",
+    "new_site_id",
+    "new_site_name",
+    "contact_status",
+)
 
 
 def normalize_header(value: str) -> str:
@@ -55,6 +74,37 @@ def normalize_header(value: str) -> str:
 
 def normalize_value(value: str | None) -> str:
     return "" if value is None else str(value).strip()
+
+
+def normalize_explicit_teid(value: str | None) -> str:
+    normalized = normalize_value(value)
+    return normalized if normalized.isdigit() and len(normalized) == 4 else ""
+
+
+def _first_non_empty(values: list[object]) -> str:
+    for value in values:
+        normalized = normalize_value(value)
+        if normalized:
+            return normalized
+    return ""
+
+
+def coalesce_duplicate_columns(dataframe: pd.DataFrame) -> pd.DataFrame:
+    if dataframe.columns.is_unique:
+        return dataframe
+
+    merged: dict[str, pd.Series] = {}
+    ordered_columns = list(dict.fromkeys(dataframe.columns))
+    for column in ordered_columns:
+        duplicate_frame = dataframe.loc[:, dataframe.columns == column]
+        if isinstance(duplicate_frame, pd.Series):
+            merged[column] = duplicate_frame.fillna("")
+            continue
+        if duplicate_frame.shape[1] == 1:
+            merged[column] = duplicate_frame.iloc[:, 0].fillna("")
+            continue
+        merged[column] = duplicate_frame.apply(lambda row: _first_non_empty(row.tolist()), axis=1)
+    return pd.DataFrame(merged).fillna("")
 
 
 def _row_identity_key(normalized: dict[str, str], contact_status: str) -> tuple[str, ...]:
@@ -78,6 +128,8 @@ def normalize_contact_status(raw_status: str, *, default_status: str = "Add") ->
     status = normalize_value(raw_status).lower()
     if not status:
         return default_status, True
+    if "switch to ad astra" in status:
+        return "Modify-Function Change", True
     if "modify-function" in status or "modify function" in status:
         return "Modify-Function Change", True
     if "deactivat" in status or "delete" in status or "separat" in status:
@@ -85,6 +137,20 @@ def normalize_contact_status(raw_status: str, *, default_status: str = "Add") ->
     if "add" in status or "new pin" in status:
         return "Add", True
     return normalize_value(raw_status), False
+
+
+def looks_like_move_comment(comment: str) -> bool:
+    normalized = normalize_value(comment).lower()
+    if not normalized:
+        return False
+    move_patterns = (
+        r"\bmoving\s+from\b",
+        r"\bmoved\s+from\b",
+        r"\bmove\s+from\b",
+        r"\btransfer(?:ring|red)?\s+from\b",
+        r"\brelocat(?:e|ing|ed)\s+from\b",
+    )
+    return any(re.search(pattern, normalized) for pattern in move_patterns)
 
 
 def load_input_frame(input_path: Path) -> pd.DataFrame:
@@ -107,6 +173,7 @@ def parse_input_dataframe(dataframe: pd.DataFrame, *, default_contact_status: st
         for column in dataframe.columns
     }
     dataframe = dataframe.rename(columns=mapped_headers).fillna("")
+    dataframe = coalesce_duplicate_columns(dataframe)
 
     rows: list[ParsedRow] = []
     seen_row_keys: set[tuple[str, ...]] = set()
@@ -117,12 +184,48 @@ def parse_input_dataframe(dataframe: pd.DataFrame, *, default_contact_status: st
             column: normalize_value(raw_row.get(column, ""))
             for column in dataframe.columns
         }
+        if not any(normalized.get(field, "") for field in MEANINGFUL_ROW_FIELDS):
+            continue
+        original_site_id = normalized.get("site_id", "")
+        original_new_site_id = normalized.get("new_site_id", "")
+        normalized["site_id"] = normalize_explicit_teid(original_site_id)
+        normalized["new_site_id"] = normalize_explicit_teid(original_new_site_id)
         contact_status, status_is_valid = normalize_contact_status(
             normalized.get("contact_status", ""),
             default_status=default_contact_status,
         )
         notes: list[str] = []
         error_fields: list[str] = []
+
+        if (
+            contact_status == "Add"
+            and normalized.get("user_pin")
+            and normalized.get("site_name")
+            and looks_like_move_comment(normalized.get("comments", ""))
+        ):
+            contact_status = "Modify-Function Change"
+            notes.append("Promoted Add row to Modify-Function Change because comments indicate the requester is moving and Current User PIN was provided.")
+
+        if contact_status == "Modify-Function Change" and not normalized.get("new_site_name") and normalized.get("site_name"):
+            normalized["new_site_name"] = normalized["site_name"]
+            notes.append("Treating Site Name as New Site for Switch to Ad Astra / modify-function input.")
+
+        if contact_status == "Modify-Function Change" and not normalized.get("site_id") and normalized.get("user_pin"):
+            derived_old_teid = extract_teid_from_pin(normalized.get("user_pin"))
+            if derived_old_teid:
+                normalized["site_id"] = derived_old_teid
+                notes.append("Derived old-site TEID from Current User PIN for modify-function processing.")
+
+        if contact_status == "Modify-Function Change" and not normalized.get("employee_id") and normalized.get("user_pin"):
+            derived_employee_id = extract_employee_id_from_pin(normalized.get("user_pin"))
+            if derived_employee_id:
+                normalized["employee_id"] = derived_employee_id
+                notes.append("Derived Employee ID from Current User PIN for modify-function processing.")
+
+        if original_site_id and not normalized.get("site_id"):
+            notes.append("Site ID ignored because it is not a 4-digit numeric TEID; site name will be used instead.")
+        if original_new_site_id and not normalized.get("new_site_id"):
+            notes.append("New Site ID ignored because it is not a 4-digit numeric TEID; new site name will be used instead.")
 
         if contact_status == "Deactivate":
             required_fields = DEACTIVATE_REQUIRED_FIELDS

@@ -43,12 +43,18 @@ def build_remapped_email(seid: str, first_name: str, last_name: str) -> str:
 
 
 def build_modify_function_email(seid: str, first_name: str, last_name: str, *, suffix: int = 1) -> str:
+    safe_last_name = sanitize_email_part(last_name)
+    if int(suffix) <= 0:
+        last_name_part = safe_last_name
+    else:
+        last_name_part = f"{safe_last_name}{int(suffix)}" if safe_last_name else ""
+
     local_part = ".".join(
         part
         for part in (
             sanitize_email_part(seid),
             sanitize_email_part(first_name),
-            f"{sanitize_email_part(last_name)}{int(suffix)}" if sanitize_email_part(last_name) else "",
+            last_name_part,
         )
         if part
     )
@@ -181,6 +187,77 @@ def build_deactivate_payload(requester_detail: dict) -> dict:
         "Role": requester_detail.get("role") or "User",
         "PhoneNumber": requester_detail.get("phoneNumber") or "",
         "LockoutEnabled": True,
+        "SetPassword": False,
+        "Password": requester_detail.get("password") or "",
+        "Street1": requester_detail.get("street1") or "",
+        "Street2": requester_detail.get("street2") or "",
+        "State": requester_detail.get("state") or PAYLOAD_DEFAULTS["state"],
+        "City": requester_detail.get("city") or PAYLOAD_DEFAULTS["city"],
+        "PostalCode": requester_detail.get("postalCode") or PAYLOAD_DEFAULTS["postal_code"],
+        "Address": requester_detail.get("address") or PAYLOAD_DEFAULTS["address"],
+        "AccessBilling": access_billing,
+        "FK_Gender": requester_detail.get("fK_Gender") or "",
+        "FK_ServiceType": requester_detail.get("fK_ServiceType") or DEFAULT_SERVICE_TYPE,
+        "FK_DefaultNativeLanguage": requester_detail.get("fK_DefaultNativeLanguage") or DEFAULT_NATIVE_LANGUAGE,
+        "FK_DefaultTimeZone": requester_detail.get("fK_DefaultTimeZone") or DEFAULT_TIMEZONE,
+        "OPI_ShdTelephonic": bool(requester_detail.get("opI_ShdTelephonic")),
+        "OPI_OndemandTelephonic": bool(requester_detail.get("opI_OndemandTelephonic")),
+        "VRI_ShdVideoInteroreting": bool(requester_detail.get("vrI_ShdVideoInteroreting")),
+        "VRI_OndemandVideoInteroreting": bool(requester_detail.get("vrI_OndemandVideoInteroreting")),
+        "OSI_OnsiteConsecutive": bool(requester_detail.get("osI_OnsiteConsecutive")),
+        "OSI_OnsiteSimultaneous": bool(requester_detail.get("osI_OnsiteSimultaneous")),
+        "OSI_OnsiteWhisper": bool(requester_detail.get("osI_OnsiteWhisper")),
+        "OSI_Onsite": bool(requester_detail.get("osI_Onsite")),
+        "FK_PreCallPolicy": requester_detail.get("fK_PreCallPolicy") or DEFAULT_PRECALL_POLICY,
+        "Other_3rdPartyPlatform": bool(requester_detail.get("other_3rdPartyPlatform")),
+        "RecieveAllEmails": bool(requester_detail.get("recieveAllEmails")),
+        "RecieveUserEmails": bool(requester_detail.get("recieveUserEmails")),
+        "Latitude": requester_detail.get("latitude") or PAYLOAD_DEFAULTS["latitude"],
+        "Longitude": requester_detail.get("longitude") or PAYLOAD_DEFAULTS["longitude"],
+        "Country": requester_detail.get("country") or PAYLOAD_DEFAULTS["country"],
+        "SubCustomerIds": sub_customer_ids,
+        "ServiceTypes": service_types,
+        "LinguistType": requester_detail.get("linguistType") or 0,
+        "PayableType": requester_detail.get("payableType") or 0,
+    }
+
+
+def build_update_payload(
+    requester_detail: dict,
+    *,
+    email_override: str | None = None,
+    account_status_override: str | None = None,
+) -> dict:
+    service_types = requester_detail.get("serviceTypes") or []
+    if service_types and isinstance(service_types[0], dict):
+        service_types = [item.get("value") for item in service_types if item.get("value")]
+    service_types = service_types or ([requester_detail.get("fK_ServiceType")] if requester_detail.get("fK_ServiceType") else [])
+    sub_customer_ids = [
+        item.get("code")
+        for item in requester_detail.get("requesterSubcustomrs") or []
+        if item.get("code") is not None
+    ]
+    if not sub_customer_ids and requester_detail.get("fK_Customer") is not None:
+        sub_customer_ids = [requester_detail["fK_Customer"]]
+    access_billing = any(
+        (feature.get("feature") or {}).get("code") == "billing"
+        for feature in requester_detail.get("userFeatures") or []
+    )
+    account_status = account_status_override or requester_detail.get("accountStatus") or "Active"
+
+    return {
+        "Code": requester_detail.get("code"),
+        "FirstName": requester_detail.get("firstName") or "",
+        "LastName": requester_detail.get("lastName") or "",
+        "Email": email_override if email_override is not None else (requester_detail.get("email") or ""),
+        "FK_Customer": requester_detail.get("fK_Customer") or requester_detail.get("customerId"),
+        "FK_Location": requester_detail.get("fK_Location") or "",
+        "AccountStatus": account_status,
+        "PinCode": requester_detail.get("pinCode"),
+        "PinCodeString": requester_detail.get("pinCodeString") or "",
+        "Role": requester_detail.get("role") or "User",
+        "PhoneNumber": requester_detail.get("phoneNumber") or "",
+        "LockoutEnabled": bool(requester_detail.get("lockoutEnabled")),
         "SetPassword": False,
         "Password": requester_detail.get("password") or "",
         "Street1": requester_detail.get("street1") or "",

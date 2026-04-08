@@ -13,9 +13,9 @@ from qa_irs_pin.config import CUSTOMER_CREATE_OVERRIDES, DB_PATH, DEFAULT_NEW_SI
 from qa_irs_pin.matching import best_site_match, normalize_site_name, requires_explicit_site_confirmation, tokenize, top_site_matches
 from qa_irs_pin.models import ParsedRow, ProcessingRunResult, RowProcessingOutcome
 from qa_irs_pin.parser import parse_input_file
-from qa_irs_pin.payloads import build_create_payload, build_deactivate_payload
+from qa_irs_pin.payloads import build_create_payload, build_deactivate_payload, build_modify_function_email, build_update_payload
 from utils.client import ConnectAPIError, ConnectQAClient
-from utils.helpers import is_missing_fk_value, next_new_site_pin, next_pin, normalize_teid, resolve_customer_context
+from utils.helpers import is_missing_fk_value, next_new_site_pin, next_pin, normalize_pin_value, normalize_teid, normalize_text, resolve_customer_context
 
 
 def _build_summary(row_results: list[RowProcessingOutcome]) -> dict[str, int]:
@@ -187,6 +187,11 @@ def _is_active_match(match: dict[str, object]) -> bool:
 
 
 def _site_matches_modify_request(match: dict[str, object], row: ParsedRow) -> bool:
+    requested_pin = normalize_pin_value(row.user_pin)
+    match_pin = normalize_pin_value(match.get("pin_code"))
+    if requested_pin and match_pin and requested_pin == match_pin:
+        return True
+
     requested_teid = normalize_teid(row.site_id)
     match_teid = normalize_teid(match.get("teid"))
     if requested_teid:
@@ -225,6 +230,76 @@ def _looks_like_duplicate_email_error(message: str) -> bool:
         "is registered",
     )
     return any(marker in normalized for marker in duplicate_markers)
+
+
+def _find_modify_old_site_user(
+    existing: list[dict[str, object]],
+    row: ParsedRow,
+) -> dict[str, object] | None:
+    requested_pin = normalize_pin_value(row.user_pin)
+    requested_teid = normalize_teid(row.site_id)
+
+    if requested_pin:
+        exact_pin_match = next(
+            (
+                match
+                for match in existing
+                if _is_active_match(match) and normalize_pin_value(match.get("pin_code")) == requested_pin
+            ),
+            None,
+        )
+        if exact_pin_match is not None:
+            return exact_pin_match
+
+    if requested_teid:
+        exact_teid_match = next(
+            (
+                match
+                for match in existing
+                if _is_active_match(match) and normalize_teid(match.get("teid")) == requested_teid
+            ),
+            None,
+        )
+        if exact_teid_match is not None:
+            return exact_teid_match
+
+    return next(
+        (
+            match
+            for match in existing
+            if _is_active_match(match) and _site_matches_modify_request(match, row)
+        ),
+        None,
+    )
+
+
+def _find_active_destination_user(
+    existing: list[dict[str, object]],
+    *,
+    destination_teid: str,
+    first_choice_pin: str,
+) -> dict[str, object] | None:
+    normalized_pin = normalize_pin_value(first_choice_pin)
+    if normalized_pin:
+        exact_pin_match = next(
+            (
+                match
+                for match in existing
+                if _is_active_match(match) and normalize_pin_value(match.get("pin_code")) == normalized_pin
+            ),
+            None,
+        )
+        if exact_pin_match is not None:
+            return exact_pin_match
+
+    return next(
+        (
+            match
+            for match in existing
+            if _is_active_match(match) and normalize_teid(match.get("teid")) == normalize_teid(destination_teid)
+        ),
+        None,
+    )
 
 
 def process_rows(
@@ -427,23 +502,146 @@ def process_rows(
                         customer_ids=customer_ids,
                         active_only=False,
                         allow_export_fallback=False,
+                        items_per_page=100,
                     )
-                    old_site_user = next(
-                        (
-                            match
-                            for match in existing
-                            if _is_active_match(match) and _site_matches_modify_request(match, row)
-                        ),
-                        None,
-                    )
+                    old_site_user = _find_modify_old_site_user(existing, row)
                     if old_site_user is None:
-                        raise ConnectAPIError("Active requester was not found for the current site on the modify-function row.")
+                        existing = client.search_user_by_seid(
+                            row.seid,
+                            customer_ids=customer_ids,
+                            active_only=False,
+                            allow_export_fallback=True,
+                            items_per_page=100,
+                        )
+                        old_site_user = _find_modify_old_site_user(existing, row)
+                    if old_site_user is None:
+                        destination_row = ParsedRow(
+                            row_number=row.row_number,
+                            bod=row.bod,
+                            customer_name=row.customer_name,
+                            last_name=row.last_name,
+                            first_name=row.first_name,
+                            seid=row.seid,
+                            site_id=row.new_site_id,
+                            site_name=row.new_site_name,
+                            manual_site_name=row.manual_site_name,
+                            user_pin=row.user_pin,
+                            employee_id=row.employee_id,
+                            new_site_id=row.new_site_id,
+                            new_site_name=row.new_site_name,
+                            contact_status=row.contact_status,
+                            validation_status=row.validation_status,
+                            notes=list(row.notes),
+                            error_fields=list(row.error_fields),
+                            duplicate_in_batch=row.duplicate_in_batch,
+                        )
+                        candidate_sites = site_cache.setdefault(customer_name, client.get_sites_for_customer(customer_name))
+                        if not candidate_sites:
+                            raise ConnectAPIError("API 3 returned no site strings for the customer.")
+
+                        destination_teid = normalize_teid(destination_row.site_id) or None
+                        destination_site_name = destination_row.site_name
+                        if not destination_teid:
+                            destination_resolution = resolve_blank_site_id_path(destination_row, customer_name, candidate_sites, client=client)
+                            destination_site_name = str(destination_resolution["matched_site_name"])
+                            destination_teid = str(destination_resolution["resolved_teid"])
+
+                        preserved_employee_id = str(row.employee_id).strip()
+                        first_choice_pin = f"{destination_teid}{preserved_employee_id}" if destination_teid and preserved_employee_id else ""
+                        destination_existing_user = _find_active_destination_user(
+                            existing,
+                            destination_teid=destination_teid or "",
+                            first_choice_pin=first_choice_pin,
+                        )
+                        if destination_existing_user is None and normalize_pin_value(row.user_pin):
+                            export_pin_match = client.get_export_requester_by_pin(
+                                row.user_pin,
+                                customer_ids=customer_ids,
+                                active_only=False,
+                                items_per_page=100,
+                            )
+                            if export_pin_match is not None and _is_active_match(export_pin_match):
+                                old_site_user = export_pin_match
+                        if old_site_user is None and destination_existing_user is not None:
+                            existing_guid = destination_existing_user.get("connect_guid")
+                            existing_pin = destination_existing_user.get("pin_code")
+                            existing_detail = client.get_account_detail(existing_guid)
+                            email_message = "Requester already exists at the destination site."
+                            current_email = normalize_text(existing_detail.get("email"))
+
+                            if preserved_employee_id:
+                                for email_suffix in range(0, 4):
+                                    candidate_email = build_modify_function_email(row.seid, row.first_name, row.last_name, suffix=email_suffix)
+                                    if current_email.lower() == candidate_email.lower():
+                                        email_message = f"Requester already existed at the destination site with email {candidate_email}."
+                                        break
+                                    update_payload = build_update_payload(existing_detail, email_override=candidate_email)
+                                    update_mutation = client.update_user(update_payload)
+                                    if update_mutation.success:
+                                        existing_detail["email"] = candidate_email
+                                        if email_suffix == 0:
+                                            email_message = f"Requester already existed at the destination site; updated email to {candidate_email}."
+                                        else:
+                                            email_message = f"Requester already existed at the destination site; updated email to {candidate_email} after duplicate-email retry."
+                                        break
+                                    if not _looks_like_duplicate_email_error(update_mutation.message):
+                                        email_message = f"Requester already exists at the destination site, but email update failed: {update_mutation.message}"
+                                        break
+
+                            registry.write_pin_registry(
+                                connection,
+                                seid=row.seid,
+                                first_name=row.first_name,
+                                last_name=row.last_name,
+                                bod=row.bod,
+                                customer_name=customer_name,
+                                site_id=destination_teid or "",
+                                site_name=destination_site_name or destination_row.site_name,
+                                pin_9digit=existing_pin,
+                                connect_guid=existing_guid,
+                                status="Already Exists",
+                                batch_id=batch_id,
+                                created_by=created_by,
+                            )
+                            row_notes.append(email_message)
+                            row_results.append(
+                                RowProcessingOutcome(
+                                    row_number=row.row_number,
+                                    bod=row.bod,
+                                    customer_name=customer_name,
+                                    seid=row.seid,
+                                    action=row.contact_status,
+                                    input_site_name=row.site_name,
+                                    matched_site_name=destination_site_name or destination_row.site_name,
+                                    resolved_site_id=destination_teid,
+                                    generated_pin=existing_pin,
+                                    status="Already Exists",
+                                    notes=row_notes,
+                                    connect_guid=existing_guid,
+                                    verification={"account_detail": existing_detail},
+                                    modify_function={
+                                        "old_site_name": row.site_name,
+                                        "old_site_id": row.site_id,
+                                        "old_pin": row.user_pin,
+                                        "new_site_name": destination_site_name or destination_row.site_name,
+                                        "new_site_id": destination_teid,
+                                        "employee_id": preserved_employee_id,
+                                        "first_choice_pin": first_choice_pin,
+                                        "final_committed_pin": existing_pin,
+                                    },
+                                )
+                            )
+                            continue
+
+                        if old_site_user is None:
+                            raise ConnectAPIError("Active requester was not found for the current site on the modify-function row.")
 
                     old_site_id = normalize_teid(old_site_user.get("teid")) or row.site_id
                     old_pin = old_site_user.get("pin_code")
                     old_guid = old_site_user.get("connect_guid")
+                    old_site_name = normalize_text((old_site_user.get("raw") or {}).get("address")) or row.site_name
                     deactivate_step = {
-                        "old_site_name": row.site_name,
+                        "old_site_name": old_site_name,
                         "old_site_id": old_site_id,
                         "old_pin": old_pin,
                         "target_guid": old_guid,
@@ -463,7 +661,7 @@ def process_rows(
                         "guid": None,
                     }
                     modify_function_result = {
-                        "old_site_name": row.site_name,
+                        "old_site_name": old_site_name,
                         "old_site_id": old_site_id,
                         "old_pin": old_pin,
                         "new_site_name": row.new_site_name,
@@ -492,7 +690,7 @@ def process_rows(
                         "Deactivated current-site requester for modify-function change",
                         row_number=row.row_number,
                         details={
-                            "old_site_name": row.site_name,
+                            "old_site_name": old_site_name,
                             "old_site_id": old_site_id,
                             "old_pin": old_pin,
                             "guid": old_guid,
@@ -575,7 +773,7 @@ def process_rows(
                     modify_function_result["first_choice_pin"] = first_choice_pin
                     generated_pin = first_choice_pin
                     create_row = destination_row
-                    modify_email_suffix = 1
+                    modify_email_suffix = 0
                     payload = build_create_payload(create_row, pin_context, generated_pin, modify_email_suffix=modify_email_suffix)
                     log("insert_payload", "Built modify-function requester insert payload", row_number=row.row_number, details=payload)
                     mutation = client.create_user(payload)
@@ -584,7 +782,10 @@ def process_rows(
                     while (not mutation.success) and _looks_like_duplicate_email_error(mutation.message) and modify_email_suffix < 3:
                         modify_email_suffix += 1
                         payload = build_create_payload(create_row, pin_context, generated_pin, modify_email_suffix=modify_email_suffix)
-                        row_notes.append(f"Modify-function email was already registered; retried with email suffix {modify_email_suffix}.")
+                        if modify_email_suffix == 1:
+                            row_notes.append("Modify-function base email was already registered; retried with email suffix 1.")
+                        else:
+                            row_notes.append(f"Modify-function email was already registered; retried with email suffix {modify_email_suffix}.")
                         log(
                             "modify_function_email_retry_payload",
                             "Retrying modify-function requester insert after duplicate email",
@@ -617,7 +818,10 @@ def process_rows(
                         while (not mutation.success) and _looks_like_duplicate_email_error(mutation.message) and modify_email_suffix < 3:
                             modify_email_suffix += 1
                             payload = build_create_payload(create_row, pin_context, generated_pin, modify_email_suffix=modify_email_suffix)
-                            row_notes.append(f"Modify-function email was already registered; retried with email suffix {modify_email_suffix}.")
+                            if modify_email_suffix == 1:
+                                row_notes.append("Modify-function base email was already registered; retried with email suffix 1.")
+                            else:
+                                row_notes.append(f"Modify-function email was already registered; retried with email suffix {modify_email_suffix}.")
                             log(
                                 "modify_function_email_retry_payload",
                                 "Retrying modify-function requester insert after duplicate email",
