@@ -1,3 +1,13 @@
+# Defaults match src/qa_irs_pin/config.py when .env is absent (avoids empty CONNECT_* in containers).
+# Production: set CONNECT_EMAIL, CONNECT_PASSWORD, and bases in LIVE-PROD/.env (never commit .env).
+
+x-connect-env: &connect-env
+  CONNECT_AUTH_BASE: ${CONNECT_AUTH_BASE:-https://appbe.ad-astrainc.com}
+  CONNECT_API_BASE: ${CONNECT_API_BASE:-https://appbe.ad-astrainc.com}
+  CONNECT_SEARCH_BASE: ${CONNECT_SEARCH_BASE:-https://appbe.ad-astrainc.com}
+  CONNECT_EMAIL: ${CONNECT_EMAIL:-aiagentdjango@adastra-inc.com}
+  CONNECT_PASSWORD: ${CONNECT_PASSWORD:-Aiagent123@}
+
 services:
   api:
     build:
@@ -5,11 +15,7 @@ services:
       dockerfile: Dockerfile
     command: uvicorn app:app --host 0.0.0.0 --port 8000
     environment:
-      CONNECT_AUTH_BASE: ${CONNECT_AUTH_BASE:-}
-      CONNECT_API_BASE: ${CONNECT_API_BASE:-}
-      CONNECT_SEARCH_BASE: ${CONNECT_SEARCH_BASE:-}
-      CONNECT_EMAIL: ${CONNECT_EMAIL:-}
-      CONNECT_PASSWORD: ${CONNECT_PASSWORD:-}
+      <<: *connect-env
       DEFAULT_PRECALL_POLICY: ${DEFAULT_PRECALL_POLICY:-}
       REQUEST_TIMEOUT_SECONDS: ${REQUEST_TIMEOUT_SECONDS:-30}
       SITE_MATCH_THRESHOLD: ${SITE_MATCH_THRESHOLD:-80}
@@ -33,11 +39,7 @@ services:
     command: streamlit run frontend.py --server.address 0.0.0.0 --server.port 8501
     environment:
       BACKEND_URL: http://api:8000
-      CONNECT_AUTH_BASE: ${CONNECT_AUTH_BASE:-}
-      CONNECT_API_BASE: ${CONNECT_API_BASE:-}
-      CONNECT_SEARCH_BASE: ${CONNECT_SEARCH_BASE:-}
-      CONNECT_EMAIL: ${CONNECT_EMAIL:-}
-      CONNECT_PASSWORD: ${CONNECT_PASSWORD:-}
+      <<: *connect-env
       DEFAULT_PRECALL_POLICY: ${DEFAULT_PRECALL_POLICY:-}
       REQUEST_TIMEOUT_SECONDS: ${REQUEST_TIMEOUT_SECONDS:-30}
       SITE_MATCH_THRESHOLD: ${SITE_MATCH_THRESHOLD:-80}
