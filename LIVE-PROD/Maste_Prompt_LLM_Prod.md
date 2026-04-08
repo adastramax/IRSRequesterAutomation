@@ -141,6 +141,15 @@ Current workbook/parser proof:
   - deriving the old/current-site TEID from `Current User PIN`
   - deriving the 5-digit employee id from the same current PIN
   - keeping those rows in the Add Requester bulk workflow instead of filtering them out
+- niche move-from-comments rule: if the normalized action is still `Add` but comments indicate a site-to-site move and `Current User PIN` is populated, promote to `Modify-Function Change` and process as a move (old TEID + employee id from PIN; destination from new-site fields)
+
+BOD / customer resolution truth:
+- resolver tolerates shorthand and common IRS-style labels beyond exact canonical keys (examples: LBI→LB&I, RICE→RICS, TS Media→MEDIA, TS RICS→RICS, TS SPEC→SPEC, W&I FA→FA, W&I AM→AM, W&I EPSS→EPSS, common Appeals variants)
+- do not remove this tolerance when tightening validation unless product asks for strict-only matching
+
+Frontend summary labeling (UI only):
+- Add flow: deactivations that are part of a successful modify are shown as modify-step deactivations, not as if a separate deactivate row was processed
+- Deactivate flow: unexpected creates are labeled explicitly; backend behavior unchanged
 
 Bulk upload truth:
 - bulk review now uses `/process/review-file` with the original uploaded file
@@ -205,6 +214,7 @@ Latest additional live proof already observed:
 - latest real VM deployment also hit one git hygiene issue before pull:
   - untracked `LIVE-PROD/.dockerignore` on the VM blocked merge
   - clear or move that VM-local file if the same conflict appears again
+- recent handoff: move-from-comments parser promotion, BOD shorthand mapping, and Add/Deactivate summary labeling were manually verified in live-prod and treated as working at that time
 
 When changing code:
 - inspect current code first
@@ -227,4 +237,4 @@ Do not do these things:
 
 ## Short Version
 
-`Read LIVE-PROD/README_local_Prod.md and LIVE-PROD/SUMMARY_Prod.md first. Treat LIVE-PROD/src/qa_irs_pin/processor.py as the backend source of truth, keep LIVE-PROD/app.py thin, preserve review -> commit flow, preserve Insert/Update casing contracts, preserve the proven IRS payload shape (IRSOPI + Welcome123! + setPassword=true + EN) for all IRS accounts unless newer live proof disproves it, keep members/filter as the primary SEID lookup path, and preserve the current modify-function flow and bulk raw-file parsing behavior without broad refactors or stale QA assumptions.`
+`Read LIVE-PROD/README_local_Prod.md and LIVE-PROD/SUMMARY_Prod.md first. Treat LIVE-PROD/src/qa_irs_pin/processor.py as the backend source of truth, keep LIVE-PROD/app.py thin, preserve review -> commit flow, preserve Insert/Update casing contracts, preserve the proven IRS payload shape (IRSOPI + Welcome123! + setPassword=true + EN) for all IRS accounts unless newer live proof disproves it, keep members/filter as the primary SEID lookup path, preserve modify-function flow and bulk parsing including Add rows promoted to modify when comments indicate a move and Current User PIN is present, preserve tolerant BOD/customer shorthand resolution, and preserve Add/Deactivate summary UI semantics (modify-step vs standalone deactivate; explicit unexpected-create wording) without broad refactors or stale QA assumptions.`

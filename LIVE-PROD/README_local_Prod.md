@@ -8,7 +8,7 @@ This folder is the production-live IRS PIN instance. It came from the earlier QA
 - `app.py`: thin FastAPI wrapper
 - `frontend.py`: Streamlit operations UI
 - `utils/client.py`: Connect API client
-- `src/qa_irs_pin/config.py`: runtime config and customer overrides
+- `src/qa_irs_pin/config.py`: runtime config, customer overrides, and BOD/customer label resolution (includes shorthand and common IRS-style aliases so abbreviated client input still maps to the right account)
 - `src/qa_irs_pin/payloads.py`: create/update payload builders
 - `src/qa_irs_pin/parser.py`: input parsing
 - `src/qa_irs_pin/matching.py`: site matching and manual-selection logic
@@ -61,6 +61,8 @@ Important current rules:
 - email domain remains `@ad-astrainc.com`
 
 Runtime `fK_Customer` and `fK_Location` come from the live API 1 pin-context path rather than from QA shortcuts.
+
+BOD / customer matching is intentionally forgiving: besides exact canonical names, common abbreviations and IRS-hint-style strings resolve to the same accounts (for example `LBI` → LB&I, `RICE` → RICS, `TS Media` → MEDIA, `TS RICS` → RICS, `TS SPEC` → SPEC, `W&I FA` → FA, `W&I AM` → AM, `W&I EPSS` → EPSS, and typical Appeals variants). This reduces operator failures from spreadsheets that do not match IRS wording character-for-character.
 
 ## Current Proven Payload Truth
 
@@ -255,6 +257,8 @@ Latest local UI/runtime proof:
 - bulk processed-results rendering now uses the commit response shape correctly, so successful bulk uploads show row-level outcomes instead of an empty processed-results table
 - processed results now surface the 9-digit PIN for `Already Exists` rows when the backend returns it
 - modify-function row rendering no longer shows a mismatched old/current TEID next to the destination/new site name on failure
+- Add Requester processed summaries: old-site deactivations that occur **inside** a successful modify are labeled as modify-step deactivations, so mixed Add+modify files do not read like a standalone deactivate batch
+- Deactivate Requester processed summaries: when the backend reports creates that were not expected from a pure deactivate upload, the UI wording calls that out explicitly (display-only; APIs unchanged)
 
 ## Workbook Compatibility
 
@@ -305,6 +309,7 @@ Current supported workbook case:
   - deriving the old/current-site TEID from `Current User PIN`
   - deriving the 5-digit employee id from the same current PIN
   - keeping those rows in the Add Requester bulk workflow rather than filtering them out
+- if the row still reads as `Add` after action normalization but **comments** describe moving from one site to another **and** `Current User PIN` is filled, the parser promotes the row to `Modify-Function Change` and runs the move path: old TEID and 5-digit employee id from the PIN (e.g. `6701-87809` → TEID `6701`, id `87809`), destination from `New Site:Site ID` / `New Site` (and related columns) as for other modify rows
 
 ## Bulk Upload Reality
 
@@ -361,3 +366,7 @@ Current most useful next steps:
 2. decide whether modify-function email retry should remain capped at suffix `3` or expand by policy
 3. create a dedicated proof pack if the team wants repeated forced evidence of suffix `2` and suffix `3`
 4. keep the current members-first runtime contract documented if no business rule changes it later
+
+## Latest verification note
+
+As of the most recent handoff, the move-from-comments promotion rule, expanded BOD/customer shorthand handling, and Add/Deactivate summary labeling updates were manually tested or reviewed in live-prod and were considered correct at that time. Re-verify after any parser, config resolver, or frontend summary changes.

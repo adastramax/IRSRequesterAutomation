@@ -53,6 +53,7 @@ Important current behavior:
 - Add Requester bulk review/commit now keeps both `Add` and `Modify-Function Change` rows from mixed source files and skips true deactivation rows
 - bulk processed-results rendering now uses the commit response shape correctly and no longer drops row-level output after successful bulk uploads
 - processed results now show the returned 9-digit PIN for `Already Exists` rows when available
+- Add-page summaries distinguish modify-step deactivations (old site turned off as part of a successful modify) from standalone deactivate rows; Deactivate-page summaries label unexpected creates more explicitly (UI copy only; backend behavior unchanged)
 
 ## Contracts To Preserve
 
@@ -195,6 +196,8 @@ Latest local UI proof:
   - `live-prod-frontend-1` running on `0.0.0.0:8520->8501/tcp`
 - the frontend badge now reads `LIVE`
 
+**Recent round (handoff):** Parser promotion for Add rows with move-in-comments plus populated `Current User PIN`, expanded BOD/customer shorthand resolution, and Add/Deactivate summary labeling clarifications were manually exercised in live-prod and were considered working as expected at handoff.
+
 ## Workbook Input Compatibility
 
 Current `LIVE-PROD` parser safely accepts the SBSE LB export workbook shape under `LIVE-PROD/data/input/`.
@@ -242,6 +245,11 @@ Current supported workbook action:
   - deriving the old/current-site TEID from `Current User PIN`
   - deriving the 5-digit employee id from the same current PIN
   - keeping those rows in the Add Requester bulk workflow
+- niche move-from-comments rule: if `Requested Action` / `contact_status` still normalizes to `Add` but free-text comments indicate the requester is **moving** from one site to another **and** `Current User PIN` is populated, the row is promoted to `Modify-Function Change` and processed as a site move (not a plain add). Example: comment like “EE moving from Santa Rosa to Oakland” with current PIN `6701-87809` yields old TEID `6701`, employee id `87809`, and destination resolved from the new/current site columns (`New Site:Site ID` / `New Site` as applicable)
+
+## BOD / customer name resolution
+
+Customer / BOD selection (manual entry and resolver paths) accepts more than strict exact canonical keys. Shorthand and common IRS-style labels map to the same accounts where unambiguous, which cuts failures from abbreviated or inconsistent client input. Representative mappings include: `LBI` → LB&I, `RICE` → RICS, `TS Media` → MEDIA, `TS RICS` → RICS, `TS SPEC` → SPEC, `W&I FA` → FA, `W&I AM` → AM, `W&I EPSS` → EPSS, plus common Appeals naming variants. Prefer canonical labels in new templates; the resolver is for tolerance of real-world spreadsheets.
 
 ## Config And Deployment
 
@@ -277,7 +285,7 @@ QA-style live deployment commands to preserve:
 - SSH to VM:
   - `ssh -i "E:\ad-astra\jahangeer 1.pem" ubuntu@44.211.141.130`
 - stop QA first if reusing the same shared ports:
-  - `cd /home/ubuntu/IRSRequesterAutomation/QA && sudo docker compose down`
+  cd /home/ubuntu/IRSRequesterAutomation/LIVE-PROD && sudo docker compose down
 - pull latest repo on VM:
   - `cd /home/ubuntu/IRSRequesterAutomation && git pull origin develop`
 - deploy live from VM:
