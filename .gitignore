@@ -21,5 +21,9 @@ Thumbs.db
 *.csv
 *.docx
 
+# Local QA/support audit DB (keep out of git)
+LIVE-PROD/data/qa_irs_pin.db
+LIVE-PROD/data/*.db
+
 # Local/test json
 test.json

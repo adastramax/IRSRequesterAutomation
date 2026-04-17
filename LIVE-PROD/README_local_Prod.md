@@ -174,6 +174,10 @@ Latest VM deployment proof:
 - one VM-specific merge blocker occurred before pull:
   - untracked file `LIVE-PROD/.dockerignore` blocked `git pull`
   - the VM-local conflicting file had to be moved/cleared so the repo-tracked `LIVE-PROD/.dockerignore` could land
+  - NOTE: sometimes `git pull` is blocked because the VM has local changes in `LIVE-PROD/data/qa_irs_pin.db`
+    - `qa_irs_pin.db` is local audit/support state; if you just need the code update, you can remove it (or stash it) before pulling:
+      - `rm -f LIVE-PROD/data/qa_irs_pin.db`
+      - then `git pull origin develop`
 - live stack was then started from:
   - `cd /home/ubuntu/IRSRequesterAutomation/LIVE-PROD && sudo docker compose up -d --build`
 - operator confirmed the live stack came up successfully on the VM
