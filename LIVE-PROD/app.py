@@ -59,6 +59,8 @@ class InputRowRequest(BaseModel):
     new_site_name: str = Field(default="", alias="New Site", description="Destination site name for modify-function requests.")
     contact_status: str = Field(default="", alias="Contact Status", description="Use Add or Deactivate.")
     manual_site_name: str = Field(default="", alias="Manual Site Name", description="Optional canonical site override.")
+    new_bod: str = Field(default="", alias="New BOD", description="Destination BOD for cross-account modify-function.")
+    new_customer_name: str = Field(default="", alias="New Customer Name", description="Destination customer name for cross-account modify-function.")
 
 
 class ProcessRowsRequest(BaseModel):
@@ -333,10 +335,16 @@ def _review_rows(request_rows: list[InputRowRequest], *, debug: bool) -> dict[st
 
                 if row.contact_status == "Modify-Function Change":
                     current_site_id = normalize_teid(row.site_id)
+                    # For cross-account modify, resolve destination customer separately
+                    _new_bod = (row.new_bod or "").strip()
+                    _new_cust = (row.new_customer_name or "").strip()
+                    dest_customer_context = resolve_customer_context(_new_bod, _new_cust) if _new_bod and _new_bod.lower() != (row.bod or "").lower() else None
+                    dest_corrected_bod = dest_customer_context["customer_name"] if dest_customer_context else corrected_bod
+
                     destination_row = row.__class__(
                         row_number=row.row_number,
-                        bod=row.bod,
-                        customer_name=row.customer_name,
+                        bod=row.new_bod if dest_customer_context else row.bod,
+                        customer_name=dest_corrected_bod if dest_customer_context else row.customer_name,
                         last_name=row.last_name,
                         first_name=row.first_name,
                         seid=row.seid,
@@ -353,19 +361,19 @@ def _review_rows(request_rows: list[InputRowRequest], *, debug: bool) -> dict[st
                         error_fields=list(row.error_fields),
                         duplicate_in_batch=row.duplicate_in_batch,
                     )
-                    destination_candidates = site_cache.setdefault(corrected_bod, app.state.client.get_sites_for_customer(corrected_bod))
+                    destination_candidates = site_cache.setdefault(dest_corrected_bod, app.state.client.get_sites_for_customer(dest_corrected_bod))
                     destination_teid = normalize_teid(destination_row.site_id)
                     destination_site_name = destination_row.site_name
                     destination_teid_resolution: dict[str, Any] | None = None
 
                     if not destination_teid:
-                        site_resolution = resolve_blank_site_id_path(destination_row, corrected_bod, destination_candidates, client=app.state.client)
+                        site_resolution = resolve_blank_site_id_path(destination_row, dest_corrected_bod, destination_candidates, client=app.state.client)
                         destination_site_name = str(site_resolution["matched_site_name"])
                         destination_teid_resolution = dict(site_resolution["teid_resolution"])
                         destination_teid = str(site_resolution["resolved_teid"])
                         notes.extend(str(note) for note in site_resolution["notes"])
                     else:
-                        destination_teid_resolution = app.state.client.resolve_teid(corrected_bod, destination_site_name)
+                        destination_teid_resolution = app.state.client.resolve_teid(dest_corrected_bod, destination_site_name)
 
                     first_choice_pin = ""
                     if destination_teid and row.employee_id:
@@ -676,6 +684,8 @@ async def process_review_file(
                 "New Site": row.new_site_name,
                 "Contact Status": row.contact_status,
                 "Manual Site Name": row.manual_site_name,
+                "New BOD": row.new_bod,
+                "New Customer Name": row.new_customer_name,
             }
         ) for row in parsed_rows]
         return _review_rows(request_rows, debug=debug)

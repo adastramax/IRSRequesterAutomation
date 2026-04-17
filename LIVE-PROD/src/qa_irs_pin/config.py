@@ -35,6 +35,11 @@ CONNECT_PASSWORD = os.getenv("CONNECT_PASSWORD", DEFAULT_CONNECT_PASSWORD)
 DEV_USE_USERNAME = os.getenv("DEV_USE_USERNAME", "")
 DEV_USE_PASSWORD = os.getenv("DEV_USE_PASSWORD", "")
 
+GRAPH_TENANT = os.getenv("GRAPH_TENANT", "adastrainccom.onmicrosoft.com")
+GRAPH_CLIENT_ID = os.getenv("GRAPH_CLIENT_ID", "d3590ed6-52b3-4102-aeff-aad2292ab01c")
+GRAPH_USERNAME = os.getenv("GRAPH_USERNAME", "")
+GRAPH_PASSWORD = os.getenv("GRAPH_PASSWORD", "")
+
 PAYLOAD_DEFAULTS = {
     "address": "400 West Bay Street",
     "city": "Jacksonville",

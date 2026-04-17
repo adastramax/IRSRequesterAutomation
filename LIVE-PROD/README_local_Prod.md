@@ -362,11 +362,85 @@ Current code now treats it as the primary lookup path for add / deactivate / mod
 
 Current most useful next steps:
 
-1. keep generating fresh proof-pack CSVs for UI testing because earlier demo-account proof users now already exist or have been deactivated
-2. decide whether modify-function email retry should remain capped at suffix `3` or expand by policy
-3. create a dedicated proof pack if the team wants repeated forced evidence of suffix `2` and suffix `3`
-4. keep the current members-first runtime contract documented if no business rule changes it later
+1. **Push and deploy to VM** — changes ready to ship: `frontend.py` bulk cross-account fix + BOD display fix
+   - `git push origin develop`
+   - SSH: `ssh -i "E:\ad-astra\jahangeer 1.pem" ubuntu@44.211.141.130`
+   - `cd /home/ubuntu/IRSRequesterAutomation && git pull origin develop`
+   - `cd /home/ubuntu/IRSRequesterAutomation/LIVE-PROD && sudo docker compose up -d --build`
+2. Decide whether modify-function email retry should remain capped at suffix `3` or expand by policy
+3. Consider adding an automatic fallback when cross-account modify create fails `Pin Code Setup Failed` — currently requires manual Add recovery in destination account
+4. Keep generating fresh proof-pack CSVs for UI testing — v3 series SEIDs are now live or deactivated
 
 ## Latest verification note
 
 As of the most recent handoff, the move-from-comments promotion rule, expanded BOD/customer shorthand handling, and Add/Deactivate summary labeling updates were manually tested or reviewed in live-prod and were considered correct at that time. Re-verify after any parser, config resolver, or frontend summary changes.
+
+## Latest Round — Bug Fix (current handoff)
+
+### Bug fixed: bulk cross-account modify was creating in source account
+
+**File:** `frontend.py`
+
+**Function:** `parsed_row_to_request_dict`
+
+`new_bod` and `new_customer_name` were not included in the row dict sent to `/process/commit` for bulk uploads. The backend received `new_bod = ""` for every row, so `destination_customer_context` was always `None` and all cross-account modify rows were created in the source account.
+
+**Fix:** Added `"New BOD": row.new_bod` and `"New Customer Name": row.new_customer_name` to the returned dict.
+
+**Secondary fix:** `build_commit_results_table` now shows the destination account in the BOD column for cross-account modify rows instead of the source account. Detection: `New BOD` is present in the input row and differs from `BOD`.
+
+**Live proof (2026-04-18):**
+- `ABR4085` Amelia Brooks — deactivated Z-DEMO Anaheim `8973`, created Z-ORIENTATION Nashville `9746` PIN `974676422` ✓
+- `LBE4086` Lucas Bennett — deactivated Z-DEMO Denver `9975` ✓, create at Z-ORIENTATION Chicago `9747` failed `Pin Code Setup Failed` (PIN `974700001` already taken) → recovered via Manual Entry as plain Add in Z-ORIENTATION
+
+**Known operator recovery for cross-account modify PIN collision:** If the new-site create step fails with `Pin Code Setup Failed` after the old site is already deactivated, use Manual Entry to create the user directly in the destination account as a plain Add (no New BOD needed — the deactivation already happened).
+
+### v3 Bulk Test Pack (2026-04-18)
+
+Test CSVs in `LIVE-PROD/data/input/`:
+
+- `v3_bulk_test01.csv` — client shape; Z-ORIENTATION adds + same-account site-change modify + deactivates
+- `v3_bulk_test02b.csv` — alternate alias columns (`Account Name`, `Action`, `TEID`, `Location`, `New Location`, `New Account`, `New Customer Name`); adds + `Remove`/`Terminate` deactivates + cross-account Z-ORIENTATION→Z-DEMO via `Transfer`/`Move`
+- `v3_bulk_test03b.csv` — BOD + `PIN Action Required` + explicit `New BOD`/`New Customer Name`; Z-DEMO adds + `Delete-Separated`/`inactive` deactivates + cross-account Z-DEMO→Z-ORIENTATION + comments field (no promotion without current PIN)
+
+## Latest Round — New Features (previous handoff)
+
+### New file: `src/qa_irs_pin/sharepoint_lookup.py`
+- Graph ROPC token using `GRAPH_TENANT`, `GRAPH_CLIENT_ID`, `GRAPH_USERNAME`, `GRAPH_PASSWORD` env vars
+- Downloads `IRS Site Listing updated.xlsx` from SharePoint; builds same-day cached `{teid→{site_name,state}}` and `{site_name→{teid,state}}` dicts
+- `get_state_for_teid(teid)` — used in `payloads.py` to set correct state on create
+- `get_teid_for_site_name(site_name)` — used in `processor.py` when Connect says site is new
+- `extract_state_from_site_name(site_name)` — smart fallback: parses 2-letter US state abbreviation from site name string (e.g. `Detroit, MI, USA` → `MI`); used when SharePoint has no match (e.g. Z-demo/orientation accounts not in IRS workbook)
+- All functions return `None` gracefully on failure — never blocks processing
+
+### State fix in `payloads.py`
+- `_build_profile_defaults` now calls SharePoint TEID lookup → state; falls back to `extract_state_from_site_name`; Jacksonville/Florida only used as absolute last resort
+
+### Parser/matcher changes
+- `normalize_header` strips `\n`/`\r` (fixes SBSE multiline column headers)
+- New `HEADER_ALIASES`: `action`, `request type`, `location`, `new location id/location`, `new bod`, `new customer name/customer`, analyst columns (`new opi pin`, `date of completion`, `manager`) → `_analyst_only`
+- `normalize_contact_status`: `transfer/move → Modify-Function Change`; `remove/terminate/inactive → Deactivate`; `active → Completed` (row skipped — already-done reference rows)
+- `matching.py`: progressive site-name stripping — tries full string → strip `(address)` suffix → strip `, STATE`; best score wins
+
+### Cross-account Modify-Function Change
+- `ParsedRow` gains `new_bod`, `new_customer_name` fields (default `""`)
+- Parser promotes to `Modify-Function Change` when `New BOD` differs from `BOD`
+- `processor.py`: resolves `destination_customer_context` from `new_bod`; deactivation uses source `customer_ids`; all create-side calls (API 3, API 1, payload, registry) use `dest_customer_name`/`dest_customer_ids`
+- `app.py` `InputRowRequest`: added `new_bod` (alias `New BOD`) and `new_customer_name` (alias `New Customer Name`) — previously silently dropped
+- `_review_rows` and `process_review_file` now resolve destination sites against destination customer
+- Frontend: `New BOD` selectbox in Manual Entry; when selected shows `New Site Name`, `Employee ID *`, `New Site ID` fields
+
+### Bug fixes found during live testing
+- `InputRowRequest` in `app.py` was missing `new_bod`/`new_customer_name` fields — Pydantic silently dropped `New BOD` from the request, so cross-account modify created in source account instead of destination. Now fixed.
+- `_review_rows` in `app.py` was resolving destination sites against source customer — now uses `dest_corrected_bod` derived from `row.new_bod`
+- `process_review_file` in `app.py` was not passing `new_bod`/`new_customer_name` when building `InputRowRequest` from bulk-parsed rows — now fixed
+- Manual Entry UI was missing `Employee ID` field for cross-account modify — added `add_cross_employee_id_input` (session key) that appears alongside `New Site ID` when `New BOD` is selected; maps to `Employee ID` in the row dict sent to backend
+
+### New env vars required
+```
+GRAPH_TENANT=adastrainccom.onmicrosoft.com
+GRAPH_CLIENT_ID=d3590ed6-52b3-4102-aeff-aad2292ab01c
+GRAPH_USERNAME=Teams@ad-astrainc.com
+GRAPH_PASSWORD=<password>
+```
+Added to `config.py`, `docker-compose.yml` (in `x-connect-env` anchor), and `.env.example`.

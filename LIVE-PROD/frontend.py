@@ -425,6 +425,8 @@ def parsed_row_to_request_dict(row: ParsedRow) -> dict[str, Any]:
         "New Site": row.new_site_name,
         "Contact Status": row.contact_status,
         "Manual Site Name": row.manual_site_name,
+        "New BOD": row.new_bod,
+        "New Customer Name": row.new_customer_name,
     }
 
 
@@ -447,8 +449,12 @@ def parsed_row_to_deactivate_request_dict(row: ParsedRow) -> dict[str, Any]:
     }
 
 
-def add_row(bod: str, first: str, last: str, seid: str, site_name: str, site_id: str, manual_site_name: str) -> dict[str, str]:
-    return {"BOD": bod, "First Name": first.strip(), "Last Name": last.strip(), "SEID": seid.strip(), "Site Name": site_name.strip(), "Site ID": site_id.strip(), "Contact Status": "Add", "Manual Site Name": manual_site_name.strip()}
+def add_row(bod: str, first: str, last: str, seid: str, site_name: str, site_id: str, manual_site_name: str, new_bod: str = "") -> dict[str, str]:
+    row: dict[str, str] = {"BOD": bod, "First Name": first.strip(), "Last Name": last.strip(), "SEID": seid.strip(), "Site Name": site_name.strip(), "Site ID": site_id.strip(), "Contact Status": "Add", "Manual Site Name": manual_site_name.strip()}
+    if new_bod.strip():
+        row["New BOD"] = new_bod.strip()
+        row["Contact Status"] = "Modify-Function Change"
+    return row
 
 
 def deactivate_row(bod: str, seid: str, site_name: str, site_id: str, first_name: str = "", last_name: str = "") -> dict[str, str]:
@@ -759,9 +765,19 @@ def build_commit_results_table(commit_result: dict[str, Any]) -> pd.DataFrame:
         output = result.get("result") or {}
         connect_payload = result.get("connect_payload") or {}
         site_name, teid = commit_result_site_and_teid(input_row, corrected, output)
+        action = str(input_row.get("Contact Status", "")).strip()
+        is_cross_account_modify = (
+            action == "Modify-Function Change"
+            and str(input_row.get("New BOD", "")).strip()
+            and str(input_row.get("New BOD", "")).strip().lower() != str(input_row.get("BOD", "")).strip().lower()
+        )
+        if is_cross_account_modify:
+            display_bod = corrected.get("corrected_bod") or input_row.get("New Customer Name") or input_row.get("New BOD") or input_row.get("BOD", "")
+        else:
+            display_bod = corrected.get("corrected_bod") or input_row.get("BOD", "")
         rows.append(
             processed_result_row(
-                bod=corrected.get("corrected_bod") or input_row.get("BOD", ""),
+                bod=display_bod,
                 site_name=site_name,
                 teid=teid,
                 seid=input_row.get("SEID", ""),
@@ -890,6 +906,26 @@ def render_add_requester_page() -> None:
         st.caption("Required fields are marked with *")
         st.caption("Site ID: only provide if the exact site is already known.")
         st.caption("Use Manual Site Name only when the review flow asks for manual site selection.")
+        st.divider()
+        st.caption("Cross-Account Move (optional) — fill New BOD + New Site Name to move a requester to a different account.")
+        new_bod_options = [""] + bods
+        if "add_new_bod_input" not in st.session_state:
+            st.session_state.add_new_bod_input = ""
+        st.selectbox("New BOD (cross-account move only)", new_bod_options, key="add_new_bod_input")
+        if st.session_state.add_new_bod_input:
+            st.text_input("New Site Name *", key="add_new_site_name_input")
+            nc1, nc2 = st.columns(2)
+            with nc1:
+                st.text_input("Employee ID * (last 5 digits of current PIN)", key="add_cross_employee_id_input")
+            with nc2:
+                st.text_input("New Site ID (Optional)", key="add_new_site_id_input")
+
+    if "add_new_site_name_input" not in st.session_state:
+        st.session_state.add_new_site_name_input = ""
+    if "add_new_site_id_input" not in st.session_state:
+        st.session_state.add_new_site_id_input = ""
+    if "add_cross_employee_id_input" not in st.session_state:
+        st.session_state.add_cross_employee_id_input = ""
 
     manual_row = add_row(
         st.session_state.add_bod_input,
@@ -899,7 +935,13 @@ def render_add_requester_page() -> None:
         st.session_state.add_site_name_input,
         st.session_state.add_site_id_input,
         st.session_state.add_manual_site_name_input,
+        new_bod=st.session_state.add_new_bod_input,
     )
+    if st.session_state.add_new_bod_input and st.session_state.add_new_site_name_input:
+        manual_row["New Site"] = st.session_state.add_new_site_name_input.strip()
+        manual_row["New Site:Site ID"] = st.session_state.add_new_site_id_input.strip()
+        if st.session_state.add_cross_employee_id_input.strip():
+            manual_row["Employee ID"] = st.session_state.add_cross_employee_id_input.strip()
     has_bulk_file = st.session_state.bulk_file_bytes is not None
     has_manual_input = any(
         manual_row[field].strip()

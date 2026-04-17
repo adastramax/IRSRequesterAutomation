@@ -173,6 +173,12 @@ Current modify-function truth:
 - for workbook-driven `Switch to Ad Astra` rows, the operator-facing `Site Name` is the destination/new site, while the old/current site context is derived from `Current User PIN`
 - when touching UI/result rendering, do not show the old/current TEID beside the destination/new site on failed modify-function rows
 
+Latest live proof (2026-04-18 — v3 bulk test pack):
+- v3_bulk_test01: Z-ORIENTATION adds (`AATH201`–`FOKF206`, `KDNE211`, `LBRN212`) all created; same-account modifies (`AATH101` Silver Spring→Nashville, `BRHW102` Nashville→Chicago) succeeded
+- v3_bulk_test02b (after frontend fix): Z-ORIENTATION adds (`SMOR301`–`MRYE306`, `KDNE311`, `LBRN312`) created; `CVAZ103`/`DMRC104` deactivated; `ECLD105` Transfer Z-ORIENTATION Austin→Z-DEMO Jacksonville created correctly in Z-DEMO ✓; `FOKF106` Move Z-ORIENTATION Flower Mound→Z-DEMO Silver Spring created correctly in Z-DEMO ✓
+- v3_bulk_test03b: Z-DEMO adds (`TADR401`–`GFLT406`, `SKIM401`, `FLAR402`) created; `EWA4082`/`HRE4087` deactivated; `ABR4085` cross-account Z-DEMO Anaheim→Z-ORIENTATION Nashville created PIN `974676422` ✓; `LBE4086` deactivated Z-DEMO Denver ✓ but create Z-ORIENTATION Chicago failed `Pin Code Setup Failed` → manually recovered
+- UI BOD column now correctly shows destination account for cross-account modify rows after `build_commit_results_table` fix
+
 Latest additional live proof already observed:
 - live auth to `appbe.ad-astrainc.com` succeeded with the current working credentials already used in this project
 - live-safe bulk and mixed-action smoke testing was run against `z- Ad Astra Demo Account`
@@ -215,6 +221,30 @@ Latest additional live proof already observed:
   - untracked `LIVE-PROD/.dockerignore` on the VM blocked merge
   - clear or move that VM-local file if the same conflict appears again
 - recent handoff: move-from-comments parser promotion, BOD shorthand mapping, and Add/Deactivate summary labeling were manually verified in live-prod and treated as working at that time
+
+Latest bug fix (current handoff — 2026-04-18):
+- `frontend.py` `parsed_row_to_request_dict` was missing `new_bod` / `new_customer_name` — bulk cross-account modify was always creating in the source account because the backend never received `new_bod`; fixed by adding both fields to the returned dict
+- `frontend.py` `build_commit_results_table` now shows destination account in BOD column for cross-account modify rows (was showing source account)
+- live proof: `ABR4085` cross-account Z-DEMO→Z-ORIENTATION succeeded after fix; `LBE4086` deactivation succeeded but create failed `Pin Code Setup Failed` (PIN collision at destination TEID) → recovered manually as plain Add in Z-ORIENTATION
+- known recovery pattern for cross-account modify PIN collision: if create step fails after old site is deactivated, use Manual Entry to create as plain Add directly in destination account (deactivation already done)
+- v3 bulk test pack (`v3_bulk_test01`, `v3_bulk_test02b`, `v3_bulk_test03b`) exercised and confirmed working in `LIVE-PROD/data/input/`
+- confirmed real site lists for Z-DEMO (14 sites) and Z-ORIENTATION (11 sites) now documented in SUMMARY_Prod.md
+
+Latest feature additions (previous handoff):
+- `src/qa_irs_pin/sharepoint_lookup.py` is a new module — Graph ROPC + SharePoint workbook lookup for TEID→state and site_name→TEID; `extract_state_from_site_name()` parses 2-letter US state from site name string as fallback
+- `payloads.py` `_build_profile_defaults` now derives state from SharePoint/site-name — Jacksonville/Florida is last resort only
+- `processor.py` checks SharePoint before auto-assigning a new TEID when Connect says site is new; adds operator warning note
+- `parser.py`: `normalize_header` strips `\n`/`\r`; new aliases for SBSE/CI/FA/cross-account columns; `active` → skip (Completed); `transfer/move` → Modify-Function Change; `remove/terminate/inactive` → Deactivate
+- `matching.py`: progressive site-name suffix stripping for SBSE-style names with parenthetical addresses
+- `models.py` `ParsedRow` gains `new_bod`, `new_customer_name` fields
+- `app.py` `InputRowRequest` gains `new_bod` (alias `New BOD`), `new_customer_name`; `_review_rows` and `process_review_file` resolve destination sites against destination customer for cross-account modify
+- `processor.py` cross-account modify: deactivates in source account, creates in destination account using `dest_customer_name`/`dest_customer_ids`
+- `frontend.py` Manual Entry: `New BOD` dropdown; `New Site Name`, `Employee ID`, `New Site ID` fields appear when New BOD is selected
+- New env vars: `GRAPH_TENANT`, `GRAPH_CLIENT_ID`, `GRAPH_USERNAME`, `GRAPH_PASSWORD` in `config.py`, `docker-compose.yml`, `.env.example`
+- Live-tested against Z-DEMO and Z-ORIENTATION: Add bulk/manual, cross-account modify bulk/manual, new-new site bulk/manual — all passed with correct state in Connect
+- Bug fixed: `InputRowRequest` in `app.py` was missing `new_bod`/`new_customer_name` fields so Pydantic silently dropped `New BOD` — cross-account modify was creating in source account. Fixed in `InputRowRequest`, `_review_rows`, and `process_review_file`
+- Bug fixed: Manual Entry UI missing `Employee ID` field for cross-account modify — added `add_cross_employee_id_input` that appears when New BOD is selected (last 5 digits of current PIN, maps to `Employee ID` in row dict)
+- Known open items: modify-function email retry still capped at suffix 3; repeat cross-account moves for same SEID may need operator monitoring
 
 When changing code:
 - inspect current code first

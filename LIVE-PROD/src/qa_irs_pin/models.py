@@ -23,6 +23,8 @@ class ParsedRow:
     new_site_name: str
     contact_status: str
     validation_status: str
+    new_bod: str = ""
+    new_customer_name: str = ""
     notes: list[str] = field(default_factory=list)
     error_fields: list[str] = field(default_factory=list)
     duplicate_in_batch: bool = False

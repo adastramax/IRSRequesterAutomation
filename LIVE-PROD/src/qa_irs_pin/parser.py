@@ -26,8 +26,10 @@ HEADER_ALIASES = {
     "site id / teid": "site_id",
     "site:location id": "site_id",
     "teid": "site_id",
+    "location id": "site_id",
     "site": "site_name",
     "site name": "site_name",
+    "location": "site_name",
     "employee id": "employee_id",
     "employeeid": "employee_id",
     "manual site name": "manual_site_name",
@@ -38,16 +40,30 @@ HEADER_ALIASES = {
     "new site site id": "new_site_id",
     "new site id": "new_site_id",
     "new site:location id": "new_site_id",
+    "new location id": "new_site_id",
     "new site": "new_site_name",
     "new site name": "new_site_name",
+    "new location": "new_site_name",
     "current user pin": "user_pin",
     "9-digit user pin": "user_pin",
     "9 digit user pin": "user_pin",
+    "9-digit user pin (completed by ad astra)": "user_pin",
+    "9 digit user pin (completed by ad astra)": "user_pin",
     "user pin": "user_pin",
     "pin action required": "contact_status",
     "contact status": "contact_status",
+    "action": "contact_status",
+    "request type": "contact_status",
     "comments": "comments",
     "comments (if needed)": "comments",
+    "new bod": "new_bod",
+    "new account": "new_bod",
+    "new customer name": "new_customer_name",
+    "new customer": "new_customer_name",
+    # analyst-use columns — map to a no-op key so they are silently ignored
+    "new opi pin": "_analyst_only",
+    "date of completion": "_analyst_only",
+    "manager": "_analyst_only",
 }
 
 ADD_REQUIRED_FIELDS = ("last_name", "first_name", "seid", "site_name")
@@ -65,11 +81,14 @@ MEANINGFUL_ROW_FIELDS = (
     "new_site_id",
     "new_site_name",
     "contact_status",
+    "new_bod",
+    "new_customer_name",
 )
 
 
 def normalize_header(value: str) -> str:
-    return " ".join(str(value).strip().lower().replace("_", " ").split())
+    cleaned = str(value).strip().lower().replace("_", " ").replace("\n", " ").replace("\r", " ")
+    return " ".join(cleaned.split())
 
 
 def normalize_value(value: str | None) -> str:
@@ -134,8 +153,14 @@ def normalize_contact_status(raw_status: str, *, default_status: str = "Add") ->
         return "Modify-Function Change", True
     if "deactivat" in status or "delete" in status or "separat" in status:
         return "Deactivate", True
+    if "remov" in status or "terminat" in status or "inactive" in status:
+        return "Deactivate", True
+    if "transfer" in status or status == "move" or status.startswith("move ") or status.endswith(" move"):
+        return "Modify-Function Change", True
     if "add" in status or "new pin" in status:
         return "Add", True
+    if status == "active":
+        return "Completed", True
     return normalize_value(raw_status), False
 
 
@@ -194,8 +219,20 @@ def parse_input_dataframe(dataframe: pd.DataFrame, *, default_contact_status: st
             normalized.get("contact_status", ""),
             default_status=default_contact_status,
         )
+        if contact_status == "Completed":
+            continue
         notes: list[str] = []
         error_fields: list[str] = []
+
+        new_bod_val = normalized.get("new_bod", "").strip()
+        if (
+            contact_status in ("Add", "Modify-Function Change")
+            and new_bod_val
+            and new_bod_val.lower() != normalized.get("bod", "").strip().lower()
+            and new_bod_val.lower() != normalized.get("customer_name", "").strip().lower()
+        ):
+            contact_status = "Modify-Function Change"
+            notes.append("Promoted to cross-account Modify-Function Change because New BOD differs from source BOD.")
 
         if (
             contact_status == "Add"
@@ -281,6 +318,8 @@ def parse_input_dataframe(dataframe: pd.DataFrame, *, default_contact_status: st
                 notes=notes,
                 error_fields=error_fields,
                 duplicate_in_batch=duplicate_in_batch,
+                new_bod=normalized.get("new_bod", ""),
+                new_customer_name=normalized.get("new_customer_name", ""),
             )
         )
 

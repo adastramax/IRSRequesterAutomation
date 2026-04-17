@@ -1,0 +1,103 @@
+Project Briefing: IRS Connect Requester Address/State Auto-Correction
+Context for the IRS PIN Creation Agent
+
+This project lives at E:\ad-astra\039 Requester Migration State Site Script and is complete for Customer 1222. It automated the correction of wrong IRS requester address and state fields in the Ad Astra Connect platform. The IRS PIN creation project may reuse several pieces of this work.
+
+The Core Data Relationship
+IRS requesters in Connect each have a 9-digit PIN stored as pinCodeString. The first 4 digits of that PIN are the TEID (TE ID), which maps to an IRS site name and state in the authoritative SharePoint workbook:
+
+pinCodeString = "674391786"
+TEID = "6743"  → IRS W&I FA Area 4, Group 411, San Diego / CA
+Connect API Endpoints (all confirmed working)
+1. Auth
+
+POST https://appbe.ad-astrainc.com/api/accounts/token
+Body (JSON): {"email": "aiagentdjango@adastra-inc.com", "password": "Aiagent123@"}
+Response: {"token": "...", "isAuthenticated": true, ...}
+2. Bulk requester export (full population)
+
+POST /api/accounts/exports/filter/CONSUMER/0/?page=1&items_per_page=99999
+Body (JSON):
+{
+  "joinDate": null,
+  "loginDate": null,
+  "customers": [1222],
+  "status": [],
+  "roles": []
+}
+Customer 1222 = US GSA IRS TS Field Assistance (FA)
+3. SEID (single requester) search
+
+POST /api/accounts/members/filter/CONSUMER/0/?page=1&items_per_page=50&search=<SEID>
+Body: same JSON filter payload
+SEID is stored as firstName in Connect
+4. Full requester detail
+
+GET /api/Accounts/GetAccountDetailByID/{code}
+Response: {"data": {...full profile...}, "payload": null}
+The actual detail is under data, not top-level
+Returns pinCodeString, pinCode, address, state, lockoutEnabled, serviceTypes, and all other profile fields needed for update
+5. Update requester
+
+POST /api/accounts/Update
+Content-Type: application/x-www-form-urlencoded   ← CRITICAL: NOT JSON
+Response: {"status": "S", "text": "Successfully updated", "result": "<code>"}
+Sending JSON returns HTTP 400 even with all required fields present
+Payload must be sent as data= (list of tuples / form-encoded)
+serviceTypes arrays use ASP.NET Core syntax: serviceTypes[0].value, serviceTypes[0].label
+You must send the full account payload — fetch detail first, then overwrite only the fields you want changed
+Critical Technical Facts
+Fact	Detail
+TEID derivation
+pinCodeString[:4]
+SEID location
+Stored as firstName field in Connect
+Inactive accounts
+lockoutEnabled=True = skip, never update
+Update encoding
+Form-encoded POST, NOT JSON
+Detail response shape
+{"data": {...}, "payload": null} — use ["data"]
+serviceTypes encoding
+serviceTypes[0].value, serviceTypes[0].label
+94 duplicate TEIDs
+In the workbook — block/fail-closed for those TEIDs
+Credentials (already in .env)
+# Connect
+CONNECT_BASE_URL=https://appbe.ad-astrainc.com
+CONNECT_EMAIL=aiagentdjango@adastra-inc.com
+CONNECT_PASSWORD=Aiagent123@
+# Microsoft Graph (for SharePoint workbook)
+GRAPH_TENANT=adastrainccom.onmicrosoft.com
+GRAPH_USERNAME=Teams@ad-astrainc.com
+GRAPH_PASSWORD=8701Georgia
+GRAPH_CLIENT_ID=d3590ed6-52b3-4102-aeff-aad2292ab01c
+GRAPH_SCOPE=https://graph.microsoft.com/.default
+SharePoint Workbook (TEID → Site/State lookup)
+Site:   https://adastrainccom.sharepoint.com/sites/AdAstraInternalAdminstration-ReportCenter
+File:   IRS Site Listing updated.xlsx
+Sheet:  Master Site and State
+Cols:   A=Site Name, B=TE ID, C=State
+Access via Microsoft Graph ROPC password grant — do not use direct SharePoint auth. The graph_client.py module in this project handles the full download flow with 6-retry exponential backoff.
+
+Reusable Modules in This Project
+Module	What it provides
+config.py
+Env var loading, Config dataclass
+graph_client.py
+Graph ROPC token + SharePoint workbook download (6 retries, same-day cache)
+sharepoint_lookup.py
+Parses workbook, builds {teid: {site_name, state}} dict, handles NaN/blank state
+connect_client.py
+Connect auth, bulk export, SEID search, detail fetch, form-encoded update
+reconciler.py
+TEID derivation, payload builder, inactive-skip logic
+runner.py
+CLI orchestration — reference for how to wire it all together
+The connect_client.py and graph_client.py modules are directly reusable by the PIN creation project for any task that needs to authenticate to Connect or read the SharePoint workbook.
+
+What Was Completed
+Customer 1222 fully processed: 1529 requesters, 24 corrected (1503 already correct, 2 TEID not found)
+All modules production-hardened and working
+Inactive-account skip confirmed working
+NaN state bug fixed (blank workbook state cell → preserve existing state, never write "NAN")

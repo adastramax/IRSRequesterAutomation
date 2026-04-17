@@ -198,6 +198,24 @@ Latest local UI proof:
 
 **Recent round (handoff):** Parser promotion for Add rows with move-in-comments plus populated `Current User PIN`, expanded BOD/customer shorthand resolution, and Add/Deactivate summary labeling clarifications were manually exercised in live-prod and were considered working as expected at handoff.
 
+**Latest round (current handoff):** Three major features added and fully live-tested against Z-DEMO and Z-ORIENTATION accounts:
+
+1. **State from SharePoint + smart site-name parsing** — new `src/qa_irs_pin/sharepoint_lookup.py` module fetches the IRS Master Site Sheet via Graph ROPC; provides `get_state_for_teid()` and `get_teid_for_site_name()`; `_build_profile_defaults` in `payloads.py` now uses the SharePoint-derived state; when SharePoint has no match, `extract_state_from_site_name()` parses the 2-letter state abbreviation directly from the site name string (e.g. `Detroit, MI, USA` → `MI`). Jacksonville/Florida is now only a last-resort fallback. Graph env vars (`GRAPH_TENANT`, `GRAPH_CLIENT_ID`, `GRAPH_USERNAME`, `GRAPH_PASSWORD`) added to `config.py`, `docker-compose.yml`, and `.env.example`. SharePoint verification in `processor.py`: when Connect says a site is new, the workbook is checked first; if found, its TEID is used and an operator warning note is added.
+
+2. **Parser and matcher expansion** — `normalize_header` now strips `\n`/`\r` (fixes SBSE multiline headers); new `HEADER_ALIASES` cover `action`, `request type`, `location`, `new location`, `new bod`, `new customer name`, analyst-use columns (`new opi pin`, `date of completion`, `manager` → `_analyst_only` no-op); `normalize_contact_status` now maps `transfer/move → Modify-Function Change`, `remove/terminate/inactive → Deactivate`, `active → Completed` (row silently skipped — these are already-done reference rows). `matching.py` has progressive site-name suffix stripping: tries full string, then strips `(address)` suffix, then strips `, STATE` — best score across all variants returned.
+
+3. **Cross-account Modify-Function Change** — `ParsedRow` gains `new_bod` and `new_customer_name` fields. When `New BOD` column differs from `BOD`, the action is promoted to `Modify-Function Change` and the processor deactivates in the source account and creates in the destination account. `InputRowRequest` in `app.py` now includes `new_bod`/`new_customer_name` fields (was silently dropping them before). Both `_review_rows` and `process_review_file` now resolve destination sites against the destination customer. Frontend `Manual Entry` shows `New BOD` dropdown; when selected, `New Site Name`, `Employee ID`, and `New Site ID` fields appear.
+
+Bug fixed during testing: `InputRowRequest` in `app.py` was silently dropping `New BOD` (Pydantic field missing), so cross-account modify was creating in the source account instead of the destination. Fixed by adding `new_bod`/`new_customer_name` to `InputRowRequest`, `_review_rows`, and `process_review_file`. Also fixed: Manual Entry UI was missing the `Employee ID` field for cross-account modify — added `add_cross_employee_id_input` field that appears when New BOD is selected (required: last 5 digits of current PIN).
+
+Live proof (Z-DEMO / Z-ORIENTATION):
+- `AATH001` created in Z-DEMO at Silver Spring MD — state `MD` in Connect ✓
+- `BRHW002` created in Z-DEMO at Nashville TN (new site) — state `TN` ✓
+- `CVAZ003` cross-account moved Orientation→Demo (Charlotte NC → Detroit MI) — Deactivated + Created ✓
+- `DMRC004` cross-account moved Demo→Orientation (Arlington VA → Nashville TN) — Deactivated + Created ✓
+- `ECLD005` created at brand-new site Raleigh NC — state `NC` extracted from site name ✓
+- `FOKF006` created at brand-new site Portland OR — state `OR` extracted from site name ✓
+
 ## Workbook Input Compatibility
 
 Current `LIVE-PROD` parser safely accepts the SBSE LB export workbook shape under `LIVE-PROD/data/input/`.
@@ -334,11 +352,52 @@ Current note on bulk paths:
 - Add Requester bulk commit still uses `/process` with the original uploaded file by design
 - Deactivate Requester bulk commit now uses explicit parsed deactivate rows through `/process/commit` to avoid accidental add/create behavior from uploaded source actions
 
+## Bug Fixed — Bulk Cross-Account Modify (frontend.py)
+
+**Root cause:** `parsed_row_to_request_dict` in `frontend.py` was not including `new_bod` / `new_customer_name` in the row dicts sent to `/process/commit` for bulk uploads. This caused the backend to receive `new_bod = ""` for every bulk row, so `destination_customer_context` was always `None` and cross-account modify rows were created in the source account instead of the destination.
+
+**Fix:** `parsed_row_to_request_dict` now includes `"New BOD": row.new_bod` and `"New Customer Name": row.new_customer_name`.
+
+**Secondary fix:** `build_commit_results_table` now shows the destination account in the BOD column for cross-account modify rows (previously showed source account).
+
+**Live proof:** `v3_bulk_test03b.csv` run after fix confirmed:
+- `ABR4085` Amelia Brooks — deactivated from Z-DEMO Anaheim `8973`, created in Z-ORIENTATION Nashville `9746`, PIN `974676422` ✓
+- `LBE4086` Lucas Bennett — deactivated from Z-DEMO Denver `9975` ✓, new-site create at Z-ORIENTATION Chicago `9747` failed with `Pin Code Setup Failed` (PIN `974700001` already taken) → manually recovered via Manual Entry as a plain Add in Z-ORIENTATION
+
+## v3 Bulk Test Pack Summary (2026-04-18)
+
+Three test CSVs created and exercised in `LIVE-PROD/data/input/`:
+
+- `v3_bulk_test01.csv` — client shape columns; Z-ORIENTATION adds + same-account modify + deactivates
+- `v3_bulk_test02b.csv` — alternate alias columns (`Account Name`, `Action`, `TEID`, `Location`, `New Location`, `New Account`, `New Customer Name`); Z-ORIENTATION adds + deactivates via `Remove`/`Terminate` keywords + cross-account modify Z-ORIENTATION→Z-DEMO via `Transfer`/`Move` keywords
+- `v3_bulk_test03b.csv` — BOD column + `PIN Action Required` + `New BOD`/`New Customer Name` explicit columns; Z-DEMO adds + deactivates via `Delete-Separated`/`inactive` keywords + cross-account modify Z-DEMO→Z-ORIENTATION + comments-promote verification
+
+**Confirmed real site lists used:**
+
+Z-DEMO (14 sites): `8701 Georgia Avenue Silver Spring MD`, `400 Bay Point Way North Jacksonville FL`, `1 North Wacker Drive Chicago IL`, `House of Blues Anaheim CA`, `700 Market Street St. Louis MO`, `1550 Crystal Drive Arlington VA`, `500 Woodward Avenue Detroit MI`, `250 Peachtree Street Atlanta GA`, `900 Innovation Drive Denver CO`, `1201 Elm Street Dallas TX`, `1600 Broadway Denver CO`, `123 Fake Street Oak Lawn IL`, `801 Broad Street Nashville TN`, `225 Ponce de Leon Atlanta GA`
+
+Z-ORIENTATION (11 sites): `400 Bay Point Way North Jacksonville FL`, `8701 Georgia Avenue Silver Spring MD`, `801 Broad Street Nashville TN`, `999 Pine Street Raleigh NC`, `2001 Lakeside Parkway Flower Mound TX`, `77 West Wacker Drive Chicago IL`, `100 North Tryon Street Charlotte NC`, `600 Congress Avenue Austin TX`, `42 Harbor View Road Portland OR`, `K4 IRS ACS Kansas City MO`, `201 Monroe Street Montgomery AL`
+
+## Practical Risks / Open Items
+
+Current real open items:
+
+- live deployment still requires real env values outside the repo
+- DNS / network reachability to `appbe.ad-astrainc.com` is sometimes unstable from this workstation/session
+- repeated live modify-function changes for the same requester may still need careful operator monitoring because Connect enforces email uniqueness and the current safe retry cap stops at suffix `3`
+- fresh CSVs are still required for repeat UI testing because the demo-account proof users now exist or have been deactivated during live-safe verification
+- cross-account modify PIN collision (`Pin Code Setup Failed`) at destination TEID can occur when employee ID from source PIN is already taken at destination — operator must manually retry as plain Add in the destination account in that case
+
+Current note on bulk paths:
+
+- Add Requester bulk commit now passes `new_bod` / `new_customer_name` through the full bulk path after the `parsed_row_to_request_dict` fix
+- Deactivate Requester bulk commit uses explicit parsed deactivate rows through `/process/commit` to avoid accidental add/create behavior
+
 ## What Next
 
 Highest-value next steps:
 
-1. Keep using fresh SEIDs and fresh site strings for live-safe demo-account verification packs
+1. **Push and deploy to VM** — `git push origin develop` → SSH to VM → `git pull origin develop` → `docker compose up -d --build`
 2. Decide whether modify-function email retry should remain capped at suffix `3` or expand by policy
-3. If needed, add one more dedicated proof pack for forced modify email suffix `2` and `3` retries
+3. Consider adding a retry/fallback path when cross-account modify create fails with `Pin Code Setup Failed` — currently requires manual Add recovery
 4. Update any deployment docs if the current local default Connect host fallback strategy changes later

@@ -14,6 +14,8 @@ from .config import (
     PAYLOAD_DEFAULTS,
     SITE_PROFILE_OVERRIDES,
 )
+from . import sharepoint_lookup
+from .sharepoint_lookup import extract_state_from_site_name
 
 
 def sanitize_email_part(value: str) -> str:
@@ -71,6 +73,28 @@ def _build_profile_defaults(row, site_context: dict) -> dict:
         profile.update(site_override)
     elif site_name:
         profile["address"] = site_name
+
+    # Derive state from SharePoint TEID lookup; fall back to PAYLOAD_DEFAULTS["state"]
+    teid = str(site_context.get("teid") or site_context.get("existingTeid") or "").strip()
+    if not teid:
+        # Try to derive TEID from maxPinCode / nextPinCode prefix
+        max_pin = str(site_context.get("maxPinCode") or "").strip()
+        if len(max_pin) >= 4:
+            teid = max_pin[:4]
+    if teid:
+        sp_state = sharepoint_lookup.get_state_for_teid(teid)
+        if sp_state:
+            profile["state"] = sp_state
+        else:
+            # Fallback: extract state abbreviation from site name string
+            parsed_state = extract_state_from_site_name(site_name)
+            if parsed_state:
+                profile["state"] = parsed_state
+    else:
+        # No TEID available — try site name parsing directly
+        parsed_state = extract_state_from_site_name(site_name)
+        if parsed_state:
+            profile["state"] = parsed_state
 
     customer_override = CUSTOMER_CREATE_OVERRIDES.get(customer_name.lower(), {})
     return {

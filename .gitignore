@@ -19,6 +19,7 @@ Thumbs.db
 *.xlsx
 *.xls
 *.csv
+*.docx
 
 # Local/test json
 test.json

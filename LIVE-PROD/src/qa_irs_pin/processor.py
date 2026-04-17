@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Iterable
 
 from qa_irs_pin import registry
+from qa_irs_pin import sharepoint_lookup
 from qa_irs_pin.config import CUSTOMER_CREATE_OVERRIDES, DB_PATH, DEFAULT_NEW_SITE_PIN_SUFFIX, DEFAULT_NEW_SITE_PIN_TOTAL_LENGTH, OUTPUT_DIR, SITE_MATCH_THRESHOLD
 from qa_irs_pin.matching import best_site_match, normalize_site_name, requires_explicit_site_confirmation, tokenize, top_site_matches
 from qa_irs_pin.models import ParsedRow, ProcessingRunResult, RowProcessingOutcome
@@ -93,6 +94,25 @@ def _looks_like_existing_site_reference(input_site_name: str, candidate_sites: l
     return False
 
 
+def _check_sharepoint_for_new_site(
+    site_name: str,
+    *,
+    notes: list[str],
+) -> tuple[str | None, bool]:
+    """Check SharePoint for a site Connect says is new. Returns (sp_teid, found_in_sp)."""
+    sp_entry = sharepoint_lookup.get_teid_for_site_name(site_name)
+    if sp_entry:
+        sp_teid = normalize_teid(sp_entry.get("teid"))
+        if sp_teid:
+            notes.append(
+                f"Site '{site_name}' was not found in Connect but was matched in the Master Site Sheet "
+                f"(TEID {sp_teid}, state {sp_entry.get('state', 'unknown')}). "
+                "Please verify this TEID before committing."
+            )
+            return sp_teid, True
+    return None, False
+
+
 def resolve_blank_site_id_path(
     row: ParsedRow,
     customer_name: str,
@@ -127,10 +147,16 @@ def resolve_blank_site_id_path(
 
     resolved_teid = normalize_teid(teid_resolution.get("existingTeid"))
     if not resolved_teid and not teid_resolution.get("siteExists"):
-        current_max_teid = normalize_teid(teid_resolution.get("currentMaxTeid"))
-        if not current_max_teid:
-            raise ConnectAPIError("API 2 did not return currentMaxTeid for a new site.")
-        resolved_teid = _next_four_digit_teid(current_max_teid)
+        # Before auto-incrementing, check SharePoint master sheet
+        sp_teid, found_in_sp = _check_sharepoint_for_new_site(matched_site_name, notes=notes)
+        if found_in_sp and sp_teid:
+            resolved_teid = sp_teid
+            strategy = "sharepoint"
+        else:
+            current_max_teid = normalize_teid(teid_resolution.get("currentMaxTeid"))
+            if not current_max_teid:
+                raise ConnectAPIError("API 2 did not return currentMaxTeid for a new site.")
+            resolved_teid = _next_four_digit_teid(current_max_teid)
 
     return {
         "matched_site_name": matched_site_name,
@@ -497,6 +523,18 @@ def process_rows(
                     continue
 
                 if row.contact_status == "Modify-Function Change":
+                    # Cross-account modify: resolve destination customer when New BOD differs from source BOD
+                    _new_bod = (row.new_bod or "").strip()
+                    _new_customer_name_input = (row.new_customer_name or "").strip()
+                    destination_customer_context = None
+                    if _new_bod and _new_bod.lower() != (row.bod or "").strip().lower():
+                        destination_customer_context = resolve_customer_context(_new_bod, _new_customer_name_input)
+                        if destination_customer_context is None:
+                            raise ConnectAPIError(f"Unknown New BOD or customer mapping for cross-account modify: '{_new_bod}'")
+                        log("cross_account_modify", "Cross-account modify detected", row_number=row.row_number, details={"source_bod": row.bod, "destination_bod": _new_bod, "destination_customer": destination_customer_context.get("customer_name")})
+                    dest_customer_name = destination_customer_context["customer_name"] if destination_customer_context else customer_name
+                    dest_customer_ids = [destination_customer_context["fk_customer"]] if destination_customer_context and destination_customer_context.get("fk_customer") else customer_ids
+
                     existing = client.search_user_by_seid(
                         row.seid,
                         customer_ids=customer_ids,
@@ -517,8 +555,8 @@ def process_rows(
                     if old_site_user is None:
                         destination_row = ParsedRow(
                             row_number=row.row_number,
-                            bod=row.bod,
-                            customer_name=row.customer_name,
+                            bod=row.new_bod if destination_customer_context else row.bod,
+                            customer_name=dest_customer_name if destination_customer_context else row.customer_name,
                             last_name=row.last_name,
                             first_name=row.first_name,
                             seid=row.seid,
@@ -535,14 +573,14 @@ def process_rows(
                             error_fields=list(row.error_fields),
                             duplicate_in_batch=row.duplicate_in_batch,
                         )
-                        candidate_sites = site_cache.setdefault(customer_name, client.get_sites_for_customer(customer_name))
+                        candidate_sites = site_cache.setdefault(dest_customer_name, client.get_sites_for_customer(dest_customer_name))
                         if not candidate_sites:
                             raise ConnectAPIError("API 3 returned no site strings for the customer.")
 
                         destination_teid = normalize_teid(destination_row.site_id) or None
                         destination_site_name = destination_row.site_name
                         if not destination_teid:
-                            destination_resolution = resolve_blank_site_id_path(destination_row, customer_name, candidate_sites, client=client)
+                            destination_resolution = resolve_blank_site_id_path(destination_row, dest_customer_name, candidate_sites, client=client)
                             destination_site_name = str(destination_resolution["matched_site_name"])
                             destination_teid = str(destination_resolution["resolved_teid"])
 
@@ -699,8 +737,8 @@ def process_rows(
 
                     destination_row = ParsedRow(
                         row_number=row.row_number,
-                        bod=row.bod,
-                        customer_name=row.customer_name,
+                        bod=row.new_bod if destination_customer_context else row.bod,
+                        customer_name=dest_customer_name if destination_customer_context else row.customer_name,
                         last_name=row.last_name,
                         first_name=row.first_name,
                         seid=row.seid,
@@ -718,7 +756,7 @@ def process_rows(
                         duplicate_in_batch=row.duplicate_in_batch,
                     )
 
-                    candidate_sites = site_cache.setdefault(customer_name, client.get_sites_for_customer(customer_name))
+                    candidate_sites = site_cache.setdefault(dest_customer_name, client.get_sites_for_customer(dest_customer_name))
                     if not candidate_sites:
                         raise ConnectAPIError("API 3 returned no site strings for the customer.")
                     address_count_before = len(candidate_sites)
@@ -727,39 +765,39 @@ def process_rows(
                     resolved_teid = normalize_teid(destination_row.site_id) or None
 
                     if resolved_teid:
-                        pin_context = client.get_pin_context(customer_name, resolved_teid)
+                        pin_context = client.get_pin_context(dest_customer_name, resolved_teid)
                         pin_context["siteName"] = matched_site_name
                         log("pin_context", "Loaded pin context for provided modify-function destination TEID", row_number=row.row_number, details={"resolved_teid": resolved_teid, "pin_context": pin_context})
                     else:
-                        site_resolution = resolve_blank_site_id_path(destination_row, customer_name, candidate_sites, client=client)
+                        site_resolution = resolve_blank_site_id_path(destination_row, dest_customer_name, candidate_sites, client=client)
                         matched_site_name = str(site_resolution["matched_site_name"])
                         teid_resolution = dict(site_resolution["teid_resolution"])
                         resolved_teid = str(site_resolution["resolved_teid"])
                         row_notes.extend(str(note) for note in site_resolution["notes"])
-                        cached_run_teid = run_new_site_teids.get(customer_name, {}).get(normalize_site_name(matched_site_name))
+                        cached_run_teid = run_new_site_teids.get(dest_customer_name, {}).get(normalize_site_name(matched_site_name))
                         if cached_run_teid:
                             resolved_teid = cached_run_teid
                             row_notes.append("Reused the same in-run TEID for a repeated new site.")
                         elif not teid_resolution.get("siteExists"):
-                            resolved_teid, reused_run_teid = assign_run_new_site_teid(customer_name, matched_site_name, teid_resolution)
+                            resolved_teid, reused_run_teid = assign_run_new_site_teid(dest_customer_name, matched_site_name, teid_resolution)
                             if reused_run_teid:
                                 row_notes.append("Reused the same in-run TEID for a repeated new site.")
                             else:
                                 row_notes.append("Assigned a unique in-run TEID for a new site.")
                         log("teid_resolution", "Resolved modify-function destination TEID state", row_number=row.row_number, details={"matched_site_name": matched_site_name, "teid_resolution": teid_resolution})
-                        pin_context = client.get_pin_context(customer_name, resolved_teid)
+                        pin_context = client.get_pin_context(dest_customer_name, resolved_teid)
                         pin_context["siteName"] = matched_site_name
                         log("pin_context", "Loaded pin context after modify-function destination TEID resolution", row_number=row.row_number, details={"resolved_teid": resolved_teid, "pin_context": pin_context})
 
                     pin_context = _backfill_missing_pin_context(
                         client=client,
-                        customer_name=customer_name,
+                        customer_name=dest_customer_name,
                         pin_context=pin_context,
                         teid_resolution=teid_resolution,
-                        customer_context=customer_context,
+                        customer_context=destination_customer_context or customer_context,
                     )
                     pin_context["siteName"] = matched_site_name or destination_row.site_name
-                    pin_context.setdefault("customerName", customer_name)
+                    pin_context.setdefault("customerName", dest_customer_name)
 
                     preserved_employee_id = str(row.employee_id).strip()
                     if not preserved_employee_id:
@@ -834,7 +872,7 @@ def process_rows(
                     if mutation.guid:
                         member_matches = client.search_user_by_seid(
                             row.seid,
-                            customer_ids=customer_ids,
+                            customer_ids=dest_customer_ids,
                             active_only=False,
                             allow_export_fallback=False,
                         )
@@ -878,8 +916,8 @@ def process_rows(
                         seid=row.seid,
                         first_name=row.first_name,
                         last_name=row.last_name,
-                        bod=row.bod,
-                        customer_name=customer_name,
+                        bod=row.new_bod if destination_customer_context else row.bod,
+                        customer_name=dest_customer_name,
                         site_id=resolved_teid or "",
                         site_name=matched_site_name or destination_row.site_name,
                         pin_9digit=generated_pin if mutation.success else None,
@@ -891,8 +929,8 @@ def process_rows(
                     row_results.append(
                         RowProcessingOutcome(
                             row_number=row.row_number,
-                            bod=row.bod,
-                            customer_name=customer_name,
+                            bod=row.new_bod if destination_customer_context else row.bod,
+                            customer_name=dest_customer_name,
                             seid=row.seid,
                             action=row.contact_status,
                             input_site_name=row.site_name,
@@ -1039,7 +1077,7 @@ def process_rows(
                         row_notes.append("Resolved TEID from existing QA site.")
 
                     pin_context = client.get_pin_context(customer_name, resolved_teid)
-                    if site_resolution_strategy == "new":
+                    if site_resolution_strategy in ("new", "sharepoint"):
                         pin_context["siteName"] = matched_site_name
                     log("pin_context", "Loaded pin context after TEID resolution", row_number=row.row_number, details={"resolved_teid": resolved_teid, "pin_context": pin_context})
 

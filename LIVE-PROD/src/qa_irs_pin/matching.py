@@ -67,15 +67,31 @@ def score_site_match(input_site_name: str, candidate_site_name: str) -> float:
     )
 
 
+def _progressive_site_name_variants(site_name: str) -> list[str]:
+    """Return progressively stripped variants of a site name for fuzzy matching."""
+    variants = [site_name]
+    # Strip parenthetical address suffix: "IRS SBSE FE Atlanta, GA (2888 Woodcock Blvd)" -> "IRS SBSE FE Atlanta, GA"
+    stripped_parens = re.sub(r"\s*\(.*?\)\s*$", "", site_name).strip()
+    if stripped_parens and stripped_parens != site_name:
+        variants.append(stripped_parens)
+    # Strip trailing ", STATE" or ", CITY, STATE": "IRS SBSE FE Atlanta, GA" -> "IRS SBSE FE Atlanta"
+    stripped_state = re.sub(r",\s*[A-Z]{2}\s*$", "", stripped_parens or site_name).strip()
+    if stripped_state and stripped_state not in variants:
+        variants.append(stripped_state)
+    return variants
+
+
 def best_site_match(input_site_name: str, candidate_site_names: list[str]) -> SiteMatchResult:
     best_name: str | None = None
     best_score = 0.0
 
-    for candidate_site_name in candidate_site_names:
-        score = score_site_match(input_site_name, candidate_site_name)
-        if score > best_score:
-            best_score = score
-            best_name = candidate_site_name
+    variants = _progressive_site_name_variants(input_site_name)
+    for variant in variants:
+        for candidate_site_name in candidate_site_names:
+            score = score_site_match(variant, candidate_site_name)
+            if score > best_score:
+                best_score = score
+                best_name = candidate_site_name
 
     return SiteMatchResult(
         input_site_name=input_site_name,
