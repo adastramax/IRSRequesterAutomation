@@ -470,7 +470,8 @@ def filter_rows_for_action(rows: list[ParsedRow], action: str) -> tuple[list[Par
     action_label = "Add" if action == "Add" else "Deactivate"
     if action == "Add":
         allowed_actions.add("Modify-Function Change")
-        action_label = "Add / Modify"
+        allowed_actions.add("Activate")
+        action_label = "Add / Modify / Activate"
 
     filtered_rows = [row for row in rows if row.contact_status in allowed_actions]
     skipped_rows = [row for row in rows if row.contact_status not in allowed_actions]
@@ -500,13 +501,13 @@ def _raise_for_status_with_detail(response: requests.Response) -> None:
 
 
 def post_review(row: dict[str, Any]) -> dict[str, Any]:
-    r = requests.post(f"{BACKEND_URL}/process/review", json={"rows": [row], "write_output": False, "debug": True}, timeout=300)
+    r = requests.post(f"{BACKEND_URL}/process/review", json={"rows": [row], "write_output": False, "debug": True}, timeout=1200)
     _raise_for_status_with_detail(r)
     return r.json()
 
 
 def post_bulk_review(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    r = requests.post(f"{BACKEND_URL}/process/review", json={"rows": rows, "write_output": False, "debug": True}, timeout=300)
+    r = requests.post(f"{BACKEND_URL}/process/review", json={"rows": rows, "write_output": False, "debug": True}, timeout=1200)
     _raise_for_status_with_detail(r)
     return r.json()
 
@@ -516,14 +517,14 @@ def post_bulk_review_file(uploaded_file) -> dict[str, Any]:
         f"{BACKEND_URL}/process/review-file",
         data={"debug": "true"},
         files={"file": (uploaded_file.name, uploaded_file.getvalue(), uploaded_file.type or "application/octet-stream")},
-        timeout=300,
+        timeout=1200,
     )
     _raise_for_status_with_detail(r)
     return r.json()
 
 
 def post_commit(payload: dict[str, Any]) -> dict[str, Any]:
-    r = requests.post(f"{BACKEND_URL}/process/commit", json=payload, timeout=300)
+    r = requests.post(f"{BACKEND_URL}/process/commit", json=payload, timeout=1200)
     _raise_for_status_with_detail(r)
     return r.json()
 
@@ -535,7 +536,7 @@ def commit_from_review(review: dict[str, Any], fallback_row: dict[str, Any]) -> 
 
 
 def post_file(uploaded_file) -> dict[str, Any]:
-    r = requests.post(f"{BACKEND_URL}/process", data={"write_output": "true"}, files={"file": (uploaded_file.name, uploaded_file.getvalue(), uploaded_file.type or "application/octet-stream")}, timeout=300)
+    r = requests.post(f"{BACKEND_URL}/process", data={"write_output": "true"}, files={"file": (uploaded_file.name, uploaded_file.getvalue(), uploaded_file.type or "application/octet-stream")}, timeout=1200)
     _raise_for_status_with_detail(r)
     return r.json()
 
@@ -650,9 +651,15 @@ def render_bulk_result(result: dict[str, Any], preview_rows: list[ParsedRow]) ->
     if has_modify_rows and not has_deactivate_rows:
         deactivated_title = "Modify Steps"
         deactivated_caption = "Current sites deactivated during modify changes"
+    has_activate_rows = "Activate" in preview_actions
     metric_cards([
         ("Total rows", summary.get("total", len(preview_rows)), "Rows received"),
         ("Created", summary.get("Created", summary.get("created", 0)), "Requesters created"),
+        *(
+            [("Activated", summary.get("Activated", summary.get("activated", 0)), "Requesters activated")]
+            if has_activate_rows
+            else []
+        ),
         (deactivated_title, summary.get("Deactivated", summary.get("deactivated", 0)), deactivated_caption),
         ("Failed", summary.get("Failed", summary.get("failed", 0)), "Rows not completed"),
     ])

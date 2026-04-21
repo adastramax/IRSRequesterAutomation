@@ -393,11 +393,78 @@ Current note on bulk paths:
 - Add Requester bulk commit now passes `new_bod` / `new_customer_name` through the full bulk path after the `parsed_row_to_request_dict` fix
 - Deactivate Requester bulk commit uses explicit parsed deactivate rows through `/process/commit` to avoid accidental add/create behavior
 
+## Latest Round — Timeout Fix + SPEC Activate Flow (current handoff)
+
+### Modify-Function Change timeout fix
+
+**Root cause:** For large IRS accounts (SBSE), the second `search_user_by_seid` call in the Modify-Function Change processor block used `allow_export_fallback=True`. If the `members/filter` API returned empty for any reason, the fallback iterated every user in the entire SBSE account page by page — easily exceeding the 300-second frontend timeout.
+
+**Fix 1 — `processor.py`:** Changed the second SEID search in the Modify-Function block from `allow_export_fallback=True` → `allow_export_fallback=False`. Members-first is sufficient for existing users; the export sweep fallback is now blocked in this path to prevent silent hangs.
+
+**Fix 2 — `frontend.py`:** All HTTP timeouts raised to 1200 seconds (20 minutes) to support large batches:
+- Manual review: 300s → 1200s
+- Bulk review: 300s → 1200s
+- Review-file: 300s → 1200s
+- Commit: 600s → 1200s
+- File upload: 300s → 1200s
+
+**Capacity:** System now supports up to ~170 Add rows or 100-row mixed batches (Add + Modify-Function + Activate) comfortably within timeout limits.
+
+### SPEC Activate flow
+
+**New `"Activate"` contact status** — handles SPEC workbook rows with action `ACTIVATE EXISTING PIN` (reactivate an existing inactive requester) and `CREATE AND ACTIVATE NEW PIN` (standard Add, already covered by `"new pin"` keyword).
+
+**Parser changes (`parser.py`):**
+- `"sidn" → "seid"` header alias (SPEC workbook identifier column)
+- `"pin" → "user_pin"` header alias (SPEC workbook PIN column)
+- `"activate existing" → "Activate"` (substring match) OR standalone `"activate" → "Activate"` (exact match) in `normalize_contact_status` — accepts both `"Activate Existing"` and just `"Activate"` for SPEC compatibility
+- `ACTIVATE_REQUIRED_FIELDS = ("seid",)` — only SEID required
+- For `Activate` and `Add` rows: TEID derived from PIN column value via `extract_teid_from_pin` (e.g. `"3217-xxxx"` → TEID `3217`; `"1504-32519"` → TEID `1504`)
+- For `Add` rows with no `first_name`: auto-filled from `seid` (SPEC workbooks have no First/Last Name columns)
+
+**Processor changes (`processor.py`):**
+- New `Activate` block between Deactivate and Modify-Function Change
+- Searches by SEID; uses full 9-digit PIN as tiebreaker, then TEID, then first result
+- Calls `build_update_payload(account_status_override="Active")` + `update_user`
+- Records status `"Activated"` or `"Failed"`
+
+**App changes (`app.py`):**
+- `_build_trimmed_summary` now includes `"activated"` key
+- `_review_rows` short-circuits `Activate` rows before `get_sites_for_customer` (no site resolution needed)
+
+**Frontend changes (`frontend.py`):**
+- `filter_rows_for_action` now includes `"Activate"` in the Add-page allowed set (was silently dropped before)
+- `render_bulk_result` shows an "Activated" metric card when Activate rows are present in the batch
+
+**SPEC workbook compatibility confirmed:**
+- Column `SIDN` → `seid`; column `Site_Name` (or `site name`) → `site_name` (already worked via existing alias)
+- Action `ACTIVATE EXISTING PIN` or `ACTIVATE EXISTING` or standalone `ACTIVATE` → `Activate`; action `CREATE AND ACTIVATE NEW PIN` → `Add`
+- PIN column value `"1504-32519"` → user_pin `150432519`; TEID `1504` derived automatically
+- No First/Last Name columns — first_name auto-filled from SEID for Add rows
+
+## Duplicate TEID Handling
+
+**Current behavior:** System correctly handles sites that share the same TEID (e.g., multiple Boston Counsel sites with TEID 5776).
+
+**How it works:**
+- PIN generation uses shared TEID max across all sites with that TEID
+- Sites are differentiated by `address` field (exact site name string)
+- API 1 `get_pin_context(teid)` returns shared max PIN + `fK_Location` for that TEID
+- Payload includes specific site name in `address` field
+
+**Example:**
+- TEID 5776: `"IRS Counsel SB1, Boston"` and `"IRS Counsel L&A1, Boston"` share same TEID
+- Both get sequential PINs: `577600123`, `577600124`
+- Connect distinguishes by `address` field, not TEID alone
+
+**Requirement:** CSV must contain correct, specific site name. System relies on site name string for differentiation when TEIDs are shared.
+
 ## What Next
 
 Highest-value next steps:
 
 1. **Push and deploy to VM** — `git push origin develop` → SSH to VM → `git pull origin develop` → `docker compose up -d --build`
-2. Decide whether modify-function email retry should remain capped at suffix `3` or expand by policy
-3. Consider adding a retry/fallback path when cross-account modify create fails with `Pin Code Setup Failed` — currently requires manual Add recovery
-4. Update any deployment docs if the current local default Connect host fallback strategy changes later
+2. Live-test SPEC Activate flow against a real SPEC workbook sample with standalone `"Activate"` action
+3. Test large batch capacity: 100-row mixed CSV (Add + Modify-Function + Activate) to verify 1200s timeout is sufficient
+4. Decide whether modify-function email retry should remain capped at suffix `3` or expand by policy
+5. Consider adding a retry/fallback path when cross-account modify create fails with `Pin Code Setup Failed` — currently requires manual Add recovery

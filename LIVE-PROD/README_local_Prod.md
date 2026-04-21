@@ -343,6 +343,27 @@ Current live modify-function behavior:
 - current safe retry cap for modify-function email suffixing is `3`
 - for workbook-driven `Switch to Ad Astra` rows, the operator-facing `Site Name` is the destination/new site, while the old/current site context is derived from `Current User PIN`
 - modify-function review may therefore show the destination/new-site match while current-site lookup still depends on the old/current PIN-derived TEID being found as an active requester in live
+- **both** SEID search calls in the modify-function processor block now use `allow_export_fallback=False` — prevents full SBSE export sweeps from causing 300-second timeouts; do not revert
+
+## Activate (Reactivate) Flow
+
+- `"Activate"` is a new contact_status that reactivates an existing inactive requester in Connect
+- triggered by the workbook action `ACTIVATE EXISTING PIN` (normalises via `"activate existing"` substring match)
+- `"CREATE AND ACTIVATE NEW PIN"` maps to `"Add"` via the existing `"new pin"` keyword — no separate handling needed
+- only `seid` is required; site_name is optional for Activate rows
+- processor finds user by SEID (members-first, no export fallback); resolves tiebreaker by full PIN, then TEID, then first match
+- calls `build_update_payload(account_status_override="Active")` + `update_user` — no new payload builder needed
+- records status `"Activated"` (success) or `"Failed"`
+- review phase returns `"Reviewed"` immediately without fetching sites (no site resolution needed)
+
+SPEC workbook compatibility:
+
+- `SIDN` column → `seid` (new alias `"sidn"`)
+- `PIN` column → `user_pin` (new alias `"pin"`)
+- `Site_Name` column → `site_name` (existing alias `"site name"` already worked via `_` normalisation)
+- Action `ACTIVATE EXISTING`, `ACTIVATE EXISTING PIN`, or standalone `ACTIVATE` → `Activate`
+- TEID derived from PIN column: `"1504-32519"` → TEID `1504`, full PIN `150432519`; `"3217-xxxx"` → TEID `3217`
+- No First/Last Name columns — `first_name` auto-filled from `seid` for Add rows before validation
 
 ## Verification Notes
 
@@ -366,14 +387,14 @@ Current code now treats it as the primary lookup path for add / deactivate / mod
 
 Current most useful next steps:
 
-1. **Push and deploy to VM** — changes ready to ship: `frontend.py` bulk cross-account fix + BOD display fix
+1. **Push and deploy to VM** — pending changes: modify-function export-fallback fix, commit timeout 600s, SPEC Activate flow
    - `git push origin develop`
    - SSH: `ssh -i "E:\ad-astra\jahangeer 1.pem" ubuntu@44.211.141.130`
    - `cd /home/ubuntu/IRSRequesterAutomation && git pull origin develop`
    - `cd /home/ubuntu/IRSRequesterAutomation/LIVE-PROD && sudo docker compose up -d --build`
-2. Decide whether modify-function email retry should remain capped at suffix `3` or expand by policy
-3. Consider adding an automatic fallback when cross-account modify create fails `Pin Code Setup Failed` — currently requires manual Add recovery in destination account
-4. Keep generating fresh proof-pack CSVs for UI testing — v3 series SEIDs are now live or deactivated
+2. Live-test SPEC Activate flow against a real SPEC workbook sample (SIDN + ACTIVATE EXISTING PIN rows)
+3. Decide whether modify-function email retry should remain capped at suffix `3` or expand by policy
+4. Consider adding an automatic fallback when cross-account modify create fails `Pin Code Setup Failed` — currently requires manual Add recovery in destination account
 
 ## Latest verification note
 
@@ -407,7 +428,56 @@ Test CSVs in `LIVE-PROD/data/input/`:
 - `v3_bulk_test02b.csv` — alternate alias columns (`Account Name`, `Action`, `TEID`, `Location`, `New Location`, `New Account`, `New Customer Name`); adds + `Remove`/`Terminate` deactivates + cross-account Z-ORIENTATION→Z-DEMO via `Transfer`/`Move`
 - `v3_bulk_test03b.csv` — BOD + `PIN Action Required` + explicit `New BOD`/`New Customer Name`; Z-DEMO adds + `Delete-Separated`/`inactive` deactivates + cross-account Z-DEMO→Z-ORIENTATION + comments field (no promotion without current PIN)
 
-## Latest Round — New Features (previous handoff)
+## Latest Round — Timeout + Parser Updates (current session)
+
+### Timeout increases for large batches
+
+**All frontend HTTP timeouts increased to 1200 seconds (20 minutes):**
+- Manual review: 300s → 1200s (line 504 `frontend.py`)
+- Bulk review: 300s → 1200s (line 510 `frontend.py`)
+- Review-file: 300s → 1200s (line 520 `frontend.py`)
+- Commit: 600s → 1200s (line 527 `frontend.py`)
+- File upload: 300s → 1200s (line 539 `frontend.py`)
+
+**Batch capacity verified:**
+- Based on live proof: 3 Add users = 22 seconds (~7 sec/user average)
+- System now supports:
+  - ~170 pure Add rows
+  - 100-row mixed batches (Add + Modify-Function + Activate) comfortably
+  - Modify-Function rows take longer but stay within limits
+
+**Why:** Original 300s/600s timeouts caused failures on batches >40-80 rows. Large IRS workbooks often contain 100+ rows across multiple accounts.
+
+### Parser tolerance for SPEC "Activate"
+
+**Updated `normalize_contact_status()` in `parser.py` (line 155-156):**
+- Now accepts standalone `"Activate"` (exact match after lowercasing)
+- Previously required `"Activate Existing"` substring match
+- SPEC workbooks often use just `"Activate"` in action column
+
+**Valid Activate patterns:**
+- `"Activate Existing"` ✅ (substring match)
+- `"Activate Existing PIN"` ✅ (substring match)
+- `"Activate"` ✅ (exact match - NEW)
+- `"ACTIVATE"` ✅ (case insensitive)
+
+**Still correctly rejects:**
+- `"Deactivate"` → routed to Deactivate flow
+- `"Active"` → marked Completed and skipped
+
+### Duplicate TEID handling verified
+
+**Confirmed working:** System correctly handles sites sharing the same TEID (e.g., multiple IRS Counsel sites in Boston with TEID 5776).
+
+**How it works:**
+1. API 1 `get_pin_context(5776)` returns max PIN across all sites with that TEID
+2. PIN generated sequentially: `577600123`, `577600124`, etc.
+3. Sites differentiated by `address` field in payload (exact site name string)
+4. Connect stores/searches by address string, not TEID alone
+
+**Requirement:** CSV must contain correct, specific site name. As long as input has the right site name from master sheet, system handles duplicate TEIDs correctly.
+
+## Previous Round — New Features (previous handoff)
 
 ### New file: `src/qa_irs_pin/sharepoint_lookup.py`
 - Graph ROPC token using `GRAPH_TENANT`, `GRAPH_CLIENT_ID`, `GRAPH_USERNAME`, `GRAPH_PASSWORD` env vars

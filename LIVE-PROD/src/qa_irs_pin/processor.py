@@ -522,6 +522,75 @@ def process_rows(
                     )
                     continue
 
+                if row.contact_status == "Activate":
+                    existing = client.search_user_by_seid(
+                        row.seid,
+                        customer_ids=customer_ids,
+                        active_only=False,
+                        allow_export_fallback=False,
+                    )
+                    requested_pin = normalize_pin_value(row.user_pin)
+                    requested_teid = normalize_teid(row.site_id)
+                    target_user = None
+                    if requested_pin and len(requested_pin) == 9:
+                        target_user = next(
+                            (m for m in existing if normalize_pin_value(m.get("pin_code")) == requested_pin),
+                            None,
+                        )
+                    if target_user is None and requested_teid:
+                        target_user = next(
+                            (m for m in existing if normalize_teid(m.get("teid")) == requested_teid),
+                            None,
+                        )
+                    if target_user is None:
+                        target_user = next(iter(existing), None)
+                    if target_user is None:
+                        raise ConnectAPIError("SEID not found for activate.")
+                    existing_pin = target_user.get("pin_code") or ""
+                    existing_teid = target_user.get("teid") or normalize_teid(row.site_id)
+                    requester_detail = client.get_account_detail(target_user["connect_guid"])
+                    activate_payload = build_update_payload(requester_detail, account_status_override="Active")
+                    mutation = client.update_user(activate_payload)
+                    if not mutation.message or mutation.message in ("Successfully updated", "Update failed."):
+                        mutation.message = "Successfully activated" if mutation.success else "Activate failed."
+                    status = "Activated" if mutation.success else "Failed"
+                    row_notes.append(mutation.message)
+                    registry.write_pin_registry(
+                        connection,
+                        seid=row.seid,
+                        first_name=row.first_name,
+                        last_name=row.last_name,
+                        bod=row.bod,
+                        customer_name=customer_name,
+                        site_id=existing_teid,
+                        site_name=row.site_name,
+                        pin_9digit=existing_pin,
+                        connect_guid=mutation.guid,
+                        status=status,
+                        batch_id=batch_id,
+                        created_by=created_by,
+                    )
+                    row_results.append(
+                        RowProcessingOutcome(
+                            row_number=row.row_number,
+                            bod=row.bod,
+                            customer_name=customer_name,
+                            seid=row.seid,
+                            action="Activate",
+                            input_site_name=row.site_name,
+                            matched_site_name=row.site_name,
+                            resolved_site_id=existing_teid,
+                            generated_pin=existing_pin,
+                            status=status,
+                            notes=row_notes,
+                            payload=activate_payload,
+                            connect_guid=mutation.guid,
+                            response=mutation.raw_response,
+                            verification=verification,
+                        )
+                    )
+                    continue
+
                 if row.contact_status == "Modify-Function Change":
                     # Cross-account modify: resolve destination customer when New BOD differs from source BOD
                     _new_bod = (row.new_bod or "").strip()
@@ -548,7 +617,7 @@ def process_rows(
                             row.seid,
                             customer_ids=customer_ids,
                             active_only=False,
-                            allow_export_fallback=True,
+                            allow_export_fallback=False,
                             items_per_page=100,
                         )
                         old_site_user = _find_modify_old_site_user(existing, row)

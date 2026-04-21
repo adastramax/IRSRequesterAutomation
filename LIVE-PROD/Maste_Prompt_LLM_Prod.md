@@ -158,9 +158,49 @@ Bulk upload truth:
 - the earlier fresh-SEID bulk timeout issue was removed by avoiding export-sweep lookup in the primary runtime path
 - Add Requester bulk review now falls back to parsed-row review if the first raw-file review request returns a transient 400
 - Deactivate Requester bulk CSV review/commit now converts uploaded rows into explicit `Deactivate` requests before sending them to the backend
-- Add Requester bulk review/commit now keeps both `Add` and `Modify-Function Change` rows from mixed source files and skips true deactivate rows
+- Add Requester bulk review/commit now keeps `Add`, `Modify-Function Change`, and `Activate` rows from mixed source files and skips true deactivate rows
 - bulk processed-results rendering now uses the commit response shape correctly instead of dropping row-level output after successful bulk uploads
 - processed results now show the returned 9-digit PIN for `Already Exists` rows when available
+- `post_commit` frontend timeout is 600 seconds (raised from 300 to handle large live IRS batches)
+
+Modify-Function Change timeout fix:
+- the second `search_user_by_seid` call in the Modify-Function processor block now uses `allow_export_fallback=False`
+- this prevents a full paginated export sweep of the entire SBSE/IRS account when `members/filter` returns empty
+- do not revert this to `allow_export_fallback=True` — that caused 300-second timeouts on live SBSE batches
+
+Frontend timeout increases for large batches:
+- all HTTP timeouts in `frontend.py` increased to 1200 seconds (20 minutes):
+  - manual review: 300s → 1200s
+  - bulk review: 300s → 1200s
+  - review-file: 300s → 1200s
+  - commit: 600s → 1200s (was increased to 600s previously, now 1200s)
+  - file upload: 300s → 1200s
+- system now supports up to ~170 Add rows or 100-row mixed batches comfortably
+- live proof showed 3 Add users = 22 seconds (~7 sec/user); 100-row mixed batch estimated at ~11 minutes
+- do not reduce these timeouts — IRS workbooks regularly contain 100+ rows across multiple accounts
+
+Current Activate flow truth:
+- `"Activate"` is a new contact_status for reactivating an existing inactive requester in Connect
+- triggered by action keyword `"activate existing"` (case-insensitive, substring match) OR standalone `"activate"` (exact match after lowercasing)
+- parser accepts: `"Activate Existing"`, `"Activate Existing PIN"`, or just `"Activate"` (SPEC compatibility)
+- `"create and activate new pin"` maps to `"Add"` (already matched by `"new pin"` keyword)
+- only `seid` is required (`ACTIVATE_REQUIRED_FIELDS`); site_name is optional
+- processor: finds user by SEID via members-first (no export fallback); uses full 9-digit PIN as tiebreaker, then TEID, then first match
+- calls `build_update_payload(account_status_override="Active")` + `update_user`; records status `"Activated"` or `"Failed"`
+- review path skips `get_sites_for_customer` (no site resolution needed for activate)
+- SPEC workbook compatibility: `"sidn"` column → seid; `"pin"` column → user_pin; `"Site_Name"` → site_name (existing alias)
+- TEID derived from PIN column value via `extract_teid_from_pin` (e.g. `"1504-32519"` → TEID `1504`, full PIN `150432519`; `"3217-xxxx"` → TEID `3217`)
+- for Add rows with no first_name column, first_name is auto-filled from seid before validation
+- `_build_trimmed_summary` exposes `"activated"` key; `render_bulk_result` shows Activated metric card when Activate rows are present
+- `"create and activate new pin"` maps to `"Add"` (already matched by `"new pin"` keyword)
+- only `seid` is required (`ACTIVATE_REQUIRED_FIELDS`); site_name is optional
+- processor: finds user by SEID via members-first (no export fallback); uses full 9-digit PIN as tiebreaker, then TEID, then first match
+- calls `build_update_payload(account_status_override="Active")` + `update_user`; records status `"Activated"` or `"Failed"`
+- review path skips `get_sites_for_customer` (no site resolution needed for activate)
+- SPEC workbook compatibility: `"sidn"` column → seid; `"pin"` column → user_pin; `"Site_Name"` → site_name (existing alias)
+- TEID derived from PIN column value via `extract_teid_from_pin` (e.g. `"1504-32519"` → TEID `1504`, full PIN `150432519`; `"3217-xxxx"` → TEID `3217`)
+- for Add rows with no first_name column, first_name is auto-filled from seid before validation
+- `_build_trimmed_summary` exposes `"activated"` key; `render_bulk_result` shows Activated metric card when Activate rows are present
 
 Current modify-function truth:
 - modify-function is a composite flow: deactivate old/current site, then create at the new site
@@ -178,6 +218,15 @@ Latest live proof (2026-04-18 — v3 bulk test pack):
 - v3_bulk_test02b (after frontend fix): Z-ORIENTATION adds (`SMOR301`–`MRYE306`, `KDNE311`, `LBRN312`) created; `CVAZ103`/`DMRC104` deactivated; `ECLD105` Transfer Z-ORIENTATION Austin→Z-DEMO Jacksonville created correctly in Z-DEMO ✓; `FOKF106` Move Z-ORIENTATION Flower Mound→Z-DEMO Silver Spring created correctly in Z-DEMO ✓
 - v3_bulk_test03b: Z-DEMO adds (`TADR401`–`GFLT406`, `SKIM401`, `FLAR402`) created; `EWA4082`/`HRE4087` deactivated; `ABR4085` cross-account Z-DEMO Anaheim→Z-ORIENTATION Nashville created PIN `974676422` ✓; `LBE4086` deactivated Z-DEMO Denver ✓ but create Z-ORIENTATION Chicago failed `Pin Code Setup Failed` → manually recovered
 - UI BOD column now correctly shows destination account for cross-account modify rows after `build_commit_results_table` fix
+
+Duplicate TEID handling:
+- system correctly handles sites sharing the same TEID (e.g., multiple IRS Counsel sites in Boston with TEID 5776)
+- PIN generation uses shared TEID max across all sites with that TEID
+- sites are differentiated by `address` field (exact site name string) in the payload
+- API 1 `get_pin_context(teid)` returns shared max PIN + `fK_Location` for that TEID
+- Connect distinguishes sites by address string, not TEID alone
+- as long as CSV contains correct, specific site name from master sheet, system handles duplicate TEIDs correctly
+- example: TEID 5776 shared by "IRS Counsel SB1, Boston" and "IRS Counsel L&A1, Boston" — both get sequential PINs, differentiated by address field
 
 Latest additional live proof already observed:
 - live auth to `appbe.ad-astrainc.com` succeeded with the current working credentials already used in this project

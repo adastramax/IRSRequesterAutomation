@@ -100,6 +100,7 @@ def _build_trimmed_summary(summary: dict[str, int]) -> dict[str, int]:
     return {
         "total": int(summary.get("total", 0)),
         "created": int(summary.get("Created", 0)),
+        "activated": int(summary.get("Activated", 0)),
         "deactivated": int(summary.get("Deactivated", 0)),
         "manual_selection_required": int(summary.get("Manual Selection Required", 0)),
         "failed": int(summary.get("Failed", 0)),
@@ -316,6 +317,32 @@ def _review_rows(request_rows: list[InputRowRequest], *, debug: bool) -> dict[st
                         },
                     }
                 )
+                if row.contact_status == "Activate":
+                    summary["Reviewed"] += 1
+                    results.append(
+                        {
+                            "input": input_row,
+                            "corrected_data": {
+                                "corrected_bod": corrected_bod,
+                                "corrected_site_name": row.site_name or "",
+                                "resolved_site_id": normalize_teid(row.site_id),
+                                "modify_function": {},
+                                "match_score": None,
+                            },
+                            "status": "Reviewed",
+                            "notes": notes,
+                            "suggested_connect_payload": {},
+                            "suggested_commit_request": {
+                                "rows": [input_row],
+                                "created_by": "IRS PIN Operator",
+                                "write_output": False,
+                                "debug": True,
+                            },
+                            "api_trace": {"logs": trace_logs} if debug else {},
+                        }
+                    )
+                    continue
+
                 candidate_sites = site_cache.setdefault(corrected_bod, app.state.client.get_sites_for_customer(corrected_bod))
                 trace_logs.append(
                     {

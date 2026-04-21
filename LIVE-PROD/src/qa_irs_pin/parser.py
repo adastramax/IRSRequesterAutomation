@@ -22,6 +22,8 @@ HEADER_ALIASES = {
     "first name": "first_name",
     "firstname": "first_name",
     "seid": "seid",
+    "sidn": "seid",
+    "pin": "user_pin",
     "site id": "site_id",
     "site id / teid": "site_id",
     "site:location id": "site_id",
@@ -68,6 +70,7 @@ HEADER_ALIASES = {
 
 ADD_REQUIRED_FIELDS = ("last_name", "first_name", "seid", "site_name")
 DEACTIVATE_REQUIRED_FIELDS = ("seid",)
+ACTIVATE_REQUIRED_FIELDS = ("seid",)
 MODIFY_FUNCTION_REQUIRED_FIELDS = ("last_name", "first_name", "seid", "site_name", "employee_id", "new_site_name")
 MEANINGFUL_ROW_FIELDS = (
     "last_name",
@@ -147,6 +150,10 @@ def normalize_contact_status(raw_status: str, *, default_status: str = "Add") ->
     status = normalize_value(raw_status).lower()
     if not status:
         return default_status, True
+    if "activate existing" in status:
+        return "Activate", True
+    if status == "activate":
+        return "Activate", True
     if "switch to ad astra" in status:
         return "Modify-Function Change", True
     if "modify-function" in status or "modify function" in status:
@@ -259,6 +266,15 @@ def parse_input_dataframe(dataframe: pd.DataFrame, *, default_contact_status: st
                 normalized["employee_id"] = derived_employee_id
                 notes.append("Derived Employee ID from Current User PIN for modify-function processing.")
 
+        if contact_status in ("Activate", "Add") and not normalized.get("site_id") and normalized.get("user_pin"):
+            derived_teid = extract_teid_from_pin(normalized.get("user_pin"))
+            if derived_teid:
+                normalized["site_id"] = derived_teid
+                notes.append("Derived TEID from PIN column.")
+
+        if contact_status == "Add" and not normalized.get("first_name") and normalized.get("seid"):
+            normalized["first_name"] = normalized["seid"]
+
         if original_site_id and not normalized.get("site_id"):
             notes.append("Site ID ignored because it is not a 4-digit numeric TEID; site name will be used instead.")
         if original_new_site_id and not normalized.get("new_site_id"):
@@ -266,6 +282,8 @@ def parse_input_dataframe(dataframe: pd.DataFrame, *, default_contact_status: st
 
         if contact_status == "Deactivate":
             required_fields = DEACTIVATE_REQUIRED_FIELDS
+        elif contact_status == "Activate":
+            required_fields = ACTIVATE_REQUIRED_FIELDS
         elif contact_status == "Modify-Function Change":
             required_fields = MODIFY_FUNCTION_REQUIRED_FIELDS
         else:
