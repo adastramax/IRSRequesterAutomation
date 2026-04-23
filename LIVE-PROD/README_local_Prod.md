@@ -33,6 +33,18 @@ Current stable contracts:
 - the 4-digit TEID guard remains
 - deactivate remains detail-first
 
+### Add: explicit TEID and short client site names (2026-04-23)
+
+When **`Site ID`** is already a valid 4-digit TEID (including TEID taken from the **`Current User PIN` / “9-digit User PIN”** column via `extract_teid_from_pin`), review and commit must not fail only because the CSV **`Site Name`** wording differs from Connect’s long canonical string.
+
+Current behavior:
+
+1. **`utils.helpers.site_name_from_pin_context_data`** reads the display site from **`get_pin_context`** using multiple possible keys and nested **`location`** shapes.
+2. If still empty, **`sharepoint_lookup.get_site_entry_by_teid`** uses the IRS Master Site workbook when Graph credentials are configured.
+3. If still empty, **`ConnectQAClient.pin_context_with_site_name_for_teid`** (in **`utils/client.py`**) can run a **bounded** loop: prefer Connect addresses whose text shares long tokens with the CSV site hint, else top-ranked fuzzy candidates, calling **`resolve_teid`** until **`existingTeid`** matches the row TEID (default cap: 48 **`resolve_teid`** calls per row; only when the caller passes the customer’s address list from **`get_sites_for_customer`**).
+
+**`app.py`** (`_review_rows`) and **`processor.py`** (Add branch with `resolved_teid`) pass **`row.site_name`** and that address list into the client helper. Manual **`Manual Site Name`** overrides, blank-TEID name resolution, and the old fuzzy + **`requires_explicit_site_confirmation`** path still apply when no canonical site is resolved by the steps above.
+
 ## Current Lookup / Verification Behavior
 
 Current code behavior is now:

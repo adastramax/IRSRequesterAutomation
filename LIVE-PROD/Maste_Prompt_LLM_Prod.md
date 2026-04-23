@@ -39,6 +39,7 @@ Then inspect these implementation files as needed:
 - LIVE-PROD/src/qa_irs_pin/processor.py
 - LIVE-PROD/src/qa_irs_pin/parser.py
 - LIVE-PROD/src/qa_irs_pin/matching.py
+- LIVE-PROD/src/qa_irs_pin/sharepoint_lookup.py
 - LIVE-PROD/src/qa_irs_pin/registry.py
 - LIVE-PROD/utils/client.py
 - LIVE-PROD/utils/helpers.py
@@ -228,6 +229,13 @@ Duplicate TEID handling:
 - as long as CSV contains correct, specific site name from master sheet, system handles duplicate TEIDs correctly
 - example: TEID 5776 shared by "IRS Counsel SB1, Boston" and "IRS Counsel L&A1, Boston" — both get sequential PINs, differentiated by address field
 
+Explicit TEID + short client site label (Add review and commit — handoff 2026-04-23):
+- symptom fixed: Add rows with a valid 4-digit `Site ID` / TEID (often from client `9-digit User PIN` shaped like `5888-`) still showed `Manual Selection Required` because fuzzy `best_site_match` + `requires_explicit_site_confirmation` compared the CSV `Site Name` to Connect’s long canonical string (e.g. `International` vs `IDTVA`) even when TEID was already correct
+- resolution order when TEID is explicit and `Manual Site Name` is blank: (1) broader site string extraction from `get_pin_context` via `utils.helpers.site_name_from_pin_context_data`, (2) `sharepoint_lookup.get_site_entry_by_teid` when Graph workbook lookup is configured, (3) bounded scan of Connect address list using CSV token hints and/or `top_site_matches` then `resolve_teid` until `existingTeid` matches the row TEID (default cap 48 checks per row — only when `candidate_addresses` is passed from `app.py` / `processor.py`)
+- `ConnectQAClient.pin_context_with_site_name_for_teid(customer, teid, *, row_site_hint=..., candidate_addresses=..., max_resolve_checks=48)` implements the above; two-arg calls still work; extra `resolve_teid` traffic applies only when the optional address list is supplied
+- `processor.py` (commit) and `app.py` `_review_rows` (review) both pass `row.site_name` and `get_sites_for_customer` results into that helper so bulk and single-row review stay aligned
+- preserve existing behavior when manual site override is set, when TEID is blank (name-only resolution path), and when none of the above yields a site string (fall back to prior fuzzy + manual gate)
+
 Latest additional live proof already observed:
 - live auth to `appbe.ad-astrainc.com` succeeded with the current working credentials already used in this project
 - live-safe bulk and mixed-action smoke testing was run against `z- Ad Astra Demo Account`
@@ -316,4 +324,4 @@ Do not do these things:
 
 ## Short Version
 
-`Read LIVE-PROD/README_local_Prod.md and LIVE-PROD/SUMMARY_Prod.md first. Treat LIVE-PROD/src/qa_irs_pin/processor.py as the backend source of truth, keep LIVE-PROD/app.py thin, preserve review -> commit flow, preserve Insert/Update casing contracts, preserve the proven IRS payload shape (IRSOPI + Welcome123! + setPassword=true + EN) for all IRS accounts unless newer live proof disproves it, keep members/filter as the primary SEID lookup path, preserve modify-function flow and bulk parsing including Add rows promoted to modify when comments indicate a move and Current User PIN is present, preserve tolerant BOD/customer shorthand resolution, and preserve Add/Deactivate summary UI semantics (modify-step vs standalone deactivate; explicit unexpected-create wording) without broad refactors or stale QA assumptions.`
+`Read LIVE-PROD/README_local_Prod.md and LIVE-PROD/SUMMARY_Prod.md first. Treat LIVE-PROD/src/qa_irs_pin/processor.py as the backend source of truth, keep LIVE-PROD/app.py thin, preserve review -> commit flow, preserve Insert/Update casing contracts, preserve the proven IRS payload shape (IRSOPI + Welcome123! + setPassword=true + EN) for all IRS accounts unless newer live proof disproves it, keep members/filter as the primary SEID lookup path, preserve modify-function flow and bulk parsing including Add rows promoted to modify when comments indicate a move and Current User PIN is present, preserve tolerant BOD/customer shorthand resolution, and preserve Add/Deactivate summary UI semantics (modify-step vs standalone deactivate; explicit unexpected-create wording) without broad refactors or stale QA assumptions. For Add with explicit Site ID/TEID, resolve canonical Connect site via pin-context JSON (helpers), optional SharePoint get_site_entry_by_teid, then bounded resolve_teid over customer addresses before falling back to fuzzy manual selection (2026-04-23 handoff).`
