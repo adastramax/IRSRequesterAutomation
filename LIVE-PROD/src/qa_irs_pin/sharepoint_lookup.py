@@ -187,6 +187,17 @@ def get_state_for_teid(teid: str, config: Any | None = None) -> str | None:
     return None
 
 
+def get_site_entry_by_teid(teid: str, config: Any | None = None) -> dict | None:
+    """Return workbook row ``{site_name, teid, state}`` for a TEID, or None."""
+    if not teid:
+        return None
+    normalized = str(teid).strip().zfill(4)
+    if not normalized.isdigit():
+        return None
+    teid_map, _ = _get_tables(config)
+    return teid_map.get(normalized)
+
+
 _US_STATE_ABBREVS = {
     "AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA","HI","ID","IL","IN","IA",
     "KS","KY","LA","ME","MD","MA","MI","MN","MS","MO","MT","NE","NV","NH","NJ",

@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import dataclass
 from typing import Any
 
 import requests
 
+from qa_irs_pin import sharepoint_lookup
 from qa_irs_pin.config import (
     CONNECT_API_BASE,
     CONNECT_AUTH_BASE,
@@ -16,7 +18,15 @@ from qa_irs_pin.config import (
     CONNECT_SEARCH_BASE,
     REQUEST_TIMEOUT_SECONDS,
 )
-from utils.helpers import coerce_form_value, extract_teid_from_pin, normalize_pin_value, normalize_teid, normalize_text
+from qa_irs_pin.matching import top_site_matches
+from utils.helpers import (
+    coerce_form_value,
+    extract_teid_from_pin,
+    normalize_pin_value,
+    normalize_teid,
+    normalize_text,
+    site_name_from_pin_context_data,
+)
 
 
 class ConnectAPIError(RuntimeError):
@@ -278,6 +288,72 @@ class ConnectQAClient:
             f"{self.api_base}/api/accounts/pin/customer-teid/{customer_name}/{normalize_teid(teid)}",
         )
         return dict(self._unwrap_data(payload) or {})
+
+    def _connect_address_matching_teid(
+        self,
+        customer_name: str,
+        teid: str,
+        row_site_hint: str,
+        candidate_addresses: list[str],
+        *,
+        max_resolve_checks: int,
+    ) -> str:
+        """Find a Connect address whose resolve_teid matches ``teid`` (bounded API calls)."""
+        teid_n = normalize_teid(teid)
+        hint = (row_site_hint or "").strip().lower()
+        hints = [w for w in re.findall(r"[a-z0-9]+", hint) if len(w) >= 4]
+        ordered: list[str] = []
+        seen: set[str] = set()
+        if hints:
+            for c in candidate_addresses:
+                if any(h in c.lower() for h in hints) and c not in seen:
+                    seen.add(c)
+                    ordered.append(c)
+        if not ordered and hint:
+            for item in top_site_matches(row_site_hint, candidate_addresses, limit=max_resolve_checks):
+                c = str(item.get("site_name") or "")
+                if c and c not in seen:
+                    seen.add(c)
+                    ordered.append(c)
+        if not ordered:
+            for c in candidate_addresses[:max_resolve_checks]:
+                if c not in seen:
+                    seen.add(c)
+                    ordered.append(c)
+        for c in ordered[:max_resolve_checks]:
+            try:
+                tr = self.resolve_teid(customer_name, c)
+            except ConnectAPIError:
+                continue
+            if normalize_teid(tr.get("existingTeid")) == teid_n:
+                return c.strip()
+        return ""
+
+    def pin_context_with_site_name_for_teid(
+        self,
+        customer_name: str,
+        teid: str,
+        *,
+        row_site_hint: str = "",
+        candidate_addresses: list[str] | None = None,
+        max_resolve_checks: int = 48,
+    ) -> tuple[str, dict[str, Any]]:
+        """Return (canonical_site_name_if_any, pin_context). Used when Site ID/TEID is already explicit."""
+        ctx = self.get_pin_context(customer_name, teid)
+        site = site_name_from_pin_context_data(ctx)
+        if not site:
+            sp_row = sharepoint_lookup.get_site_entry_by_teid(teid)
+            if sp_row and str(sp_row.get("site_name") or "").strip():
+                site = normalize_text(sp_row["site_name"]).strip()
+        if not site and candidate_addresses:
+            site = self._connect_address_matching_teid(
+                customer_name,
+                teid,
+                row_site_hint,
+                candidate_addresses,
+                max_resolve_checks=max_resolve_checks,
+            )
+        return site, ctx
 
     def search_user_by_seid(
         self,

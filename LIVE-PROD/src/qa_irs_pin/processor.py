@@ -6,7 +6,7 @@ import json
 import uuid
 from collections import Counter
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable
 
 from qa_irs_pin import registry
 from qa_irs_pin import sharepoint_lookup
@@ -1028,52 +1028,83 @@ def process_rows(
                     log("addresses", "Fetched requester site list", row_number=row.row_number, details={"customer_name": customer_name, "total_count": address_count_before})
 
                     manual_site_name = row.manual_site_name.strip()
+                    pin_context_prefetch: dict[str, Any] | None = None
                     if manual_site_name:
                         matched_site_name = manual_site_name
                         row_notes.append("Using manually selected canonical site string.")
                         log("site_match", "Using manual site override", row_number=row.row_number, details={"matched_site_name": matched_site_name})
                     else:
-                        match = best_site_match(row.site_name, candidate_sites)
-                        matched_site_name = match.matched_site_name
-                        log("site_match", "Calculated site match score", row_number=row.row_number, details={"score": match.score, "matched_site_name": matched_site_name})
-                        if matched_site_name is None:
-                            raise ConnectAPIError("Could not resolve a candidate site name from API 3 results.")
-                        if match.score < SITE_MATCH_THRESHOLD or requires_explicit_site_confirmation(row.site_name, matched_site_name):
-                            manual_selection = _build_manual_selection_payload(row, customer_name, candidate_sites)
-                            row_notes.append("Manual site selection is required before processing can continue.")
-                            registry.write_pin_registry(
-                                connection,
-                                seid=row.seid,
-                                first_name=row.first_name,
-                                last_name=row.last_name,
-                                bod=row.bod,
-                                customer_name=customer_name,
-                                site_id=resolved_teid or "",
-                                site_name=row.site_name,
-                                pin_9digit=None,
-                                connect_guid=None,
-                                status="Manual Selection Required",
-                                batch_id=batch_id,
-                                created_by=created_by,
+                        teid_site, pin_context_prefetch = client.pin_context_with_site_name_for_teid(
+                            customer_name,
+                            resolved_teid,
+                            row_site_hint=row.site_name,
+                            candidate_addresses=candidate_sites,
+                        )
+                        if teid_site:
+                            matched_site_name = teid_site
+                            if requires_explicit_site_confirmation(row.site_name, matched_site_name):
+                                row_notes.append(
+                                    "CSV site name differs from Connect canonical name; using site from explicit TEID."
+                                )
+                            log(
+                                "site_match",
+                                "Using canonical site from pin context for explicit TEID",
+                                row_number=row.row_number,
+                                details={"matched_site_name": matched_site_name, "resolved_teid": resolved_teid},
                             )
-                            row_results.append(
-                                RowProcessingOutcome(
-                                    row_number=row.row_number,
+                        else:
+                            match = best_site_match(row.site_name, candidate_sites)
+                            matched_site_name = match.matched_site_name
+                            log(
+                                "site_match",
+                                "Calculated site match score",
+                                row_number=row.row_number,
+                                details={"score": match.score, "matched_site_name": matched_site_name},
+                            )
+                            if matched_site_name is None:
+                                raise ConnectAPIError("Could not resolve a candidate site name from API 3 results.")
+                            if match.score < SITE_MATCH_THRESHOLD or requires_explicit_site_confirmation(
+                                row.site_name, matched_site_name
+                            ):
+                                manual_selection = _build_manual_selection_payload(row, customer_name, candidate_sites)
+                                row_notes.append("Manual site selection is required before processing can continue.")
+                                registry.write_pin_registry(
+                                    connection,
+                                    seid=row.seid,
+                                    first_name=row.first_name,
+                                    last_name=row.last_name,
                                     bod=row.bod,
                                     customer_name=customer_name,
-                                    seid=row.seid,
-                                    action=row.contact_status,
-                                    input_site_name=row.site_name,
-                                    matched_site_name=None,
-                                    resolved_site_id=resolved_teid,
-                                    generated_pin=None,
+                                    site_id=resolved_teid or "",
+                                    site_name=row.site_name,
+                                    pin_9digit=None,
+                                    connect_guid=None,
                                     status="Manual Selection Required",
-                                    notes=row_notes,
-                                    manual_selection=manual_selection,
+                                    batch_id=batch_id,
+                                    created_by=created_by,
                                 )
-                            )
-                            continue
-                    pin_context = client.get_pin_context(customer_name, resolved_teid)
+                                row_results.append(
+                                    RowProcessingOutcome(
+                                        row_number=row.row_number,
+                                        bod=row.bod,
+                                        customer_name=customer_name,
+                                        seid=row.seid,
+                                        action=row.contact_status,
+                                        input_site_name=row.site_name,
+                                        matched_site_name=None,
+                                        resolved_site_id=resolved_teid,
+                                        generated_pin=None,
+                                        status="Manual Selection Required",
+                                        notes=row_notes,
+                                        manual_selection=manual_selection,
+                                    )
+                                )
+                                continue
+                    pin_context = (
+                        pin_context_prefetch
+                        if pin_context_prefetch is not None
+                        else client.get_pin_context(customer_name, resolved_teid)
+                    )
                     pin_context["siteName"] = matched_site_name
                     log("pin_context", "Loaded pin context for provided TEID", row_number=row.row_number, details={"resolved_teid": resolved_teid, "pin_context": pin_context})
                 else:

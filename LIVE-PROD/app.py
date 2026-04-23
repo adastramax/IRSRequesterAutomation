@@ -293,6 +293,7 @@ def _review_rows(request_rows: list[InputRowRequest], *, debug: bool) -> dict[st
         suggested_connect_payload: dict[str, Any] = {}
         suggested_commit_request: dict[str, Any] = {}
         status = "Reviewed"
+        review_pin_context_cache: dict[str, Any] | None = None
 
         if row.validation_status == "Error":
             notes.append(f"Missing/invalid fields: {', '.join(row.error_fields)}")
@@ -520,25 +521,51 @@ def _review_rows(request_rows: list[InputRowRequest], *, debug: bool) -> dict[st
                             }
                         )
                     else:
-                        match = best_site_match(row.site_name, candidate_sites)
-                        corrected_site_name = match.matched_site_name or corrected_site_name
-                        match_score = match.score
-                        trace_logs.append(
-                            {
-                                "stage": "site_match",
-                                "message": "Calculated site match score",
-                                "row_number": row.row_number,
-                                "details": {"matched_site_name": corrected_site_name, "score": match_score},
-                            }
+                        teid_site, review_pin_context_cache = app.state.client.pin_context_with_site_name_for_teid(
+                            corrected_bod,
+                            resolved_site_id,
+                            row_site_hint=row.site_name,
+                            candidate_addresses=candidate_sites,
                         )
-                        if match.matched_site_name is None:
-                            notes.append("Could not resolve a candidate site name from API 3 results.")
-                            status = "Failed"
-                            summary["Failed"] += 1
-                        elif match.score < SITE_MATCH_THRESHOLD or requires_explicit_site_confirmation(row.site_name, corrected_site_name):
-                            notes.append("Manual site selection is required before processing can continue.")
-                            status = "Manual Selection Required"
-                            summary["Failed"] += 1
+                        if teid_site:
+                            corrected_site_name = teid_site
+                            if requires_explicit_site_confirmation(row.site_name, corrected_site_name):
+                                notes.append(
+                                    "CSV site name differs from Connect canonical name; using site resolved from TEID."
+                                )
+                            trace_logs.append(
+                                {
+                                    "stage": "site_match",
+                                    "message": "Using canonical site from pin context for explicit TEID",
+                                    "row_number": row.row_number,
+                                    "details": {
+                                        "matched_site_name": corrected_site_name,
+                                        "resolved_site_id": resolved_site_id,
+                                    },
+                                }
+                            )
+                        else:
+                            match = best_site_match(row.site_name, candidate_sites)
+                            corrected_site_name = match.matched_site_name or corrected_site_name
+                            match_score = match.score
+                            trace_logs.append(
+                                {
+                                    "stage": "site_match",
+                                    "message": "Calculated site match score",
+                                    "row_number": row.row_number,
+                                    "details": {"matched_site_name": corrected_site_name, "score": match_score},
+                                }
+                            )
+                            if match.matched_site_name is None:
+                                notes.append("Could not resolve a candidate site name from API 3 results.")
+                                status = "Failed"
+                                summary["Failed"] += 1
+                            elif match.score < SITE_MATCH_THRESHOLD or requires_explicit_site_confirmation(
+                                row.site_name, corrected_site_name
+                            ):
+                                notes.append("Manual site selection is required before processing can continue.")
+                                status = "Manual Selection Required"
+                                summary["Failed"] += 1
 
                     if status == "Reviewed":
                         teid_resolution = app.state.client.resolve_teid(corrected_bod, corrected_site_name)
@@ -558,7 +585,13 @@ def _review_rows(request_rows: list[InputRowRequest], *, debug: bool) -> dict[st
                             effective_teid = _next_four_digit_teid(current_max_teid)
                     if effective_teid:
                         resolved_site_id = effective_teid
-                        pin_context = app.state.client.get_pin_context(corrected_bod, effective_teid)
+                        if (
+                            review_pin_context_cache is not None
+                            and normalize_teid(effective_teid) == normalize_teid(row.site_id)
+                        ):
+                            pin_context = review_pin_context_cache
+                        else:
+                            pin_context = app.state.client.get_pin_context(corrected_bod, effective_teid)
                         pin_context["siteName"] = corrected_site_name
                         pin_context["customerName"] = corrected_bod
                         pin_context = _backfill_missing_review_pin_context(

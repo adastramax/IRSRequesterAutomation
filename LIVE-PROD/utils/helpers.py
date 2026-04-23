@@ -88,6 +88,34 @@ def normalize_text(value: Any) -> str:
     return str(value).strip()
 
 
+def site_name_from_pin_context_data(ctx: dict[str, Any] | None) -> str:
+    """Best-effort display site string from Connect pin-context JSON (shape varies by API)."""
+    if not ctx:
+        return ""
+    for key in (
+        "siteName",
+        "SiteName",
+        "site_name",
+        "address",
+        "Address",
+        "locationName",
+        "LocationName",
+        "siteAddress",
+        "SiteAddress",
+    ):
+        val = ctx.get(key)
+        if isinstance(val, str) and val.strip():
+            return val.strip()
+    for loc_key in ("location", "Location"):
+        loc = ctx.get(loc_key)
+        if isinstance(loc, dict):
+            for key in ("address", "Address", "name", "siteName", "displayName"):
+                val = loc.get(key)
+                if isinstance(val, str) and val.strip():
+                    return val.strip()
+    return ""
+
+
 def normalize_lookup_token(value: Any) -> str:
     text = normalize_text(value).upper()
     return re.sub(r"[^A-Z0-9]+", "", text)

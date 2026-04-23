@@ -56,6 +56,7 @@ HEADER_ALIASES = {
     "contact status": "contact_status",
     "action": "contact_status",
     "request type": "contact_status",
+    "reason for deletion": "contact_status",
     "comments": "comments",
     "comments (if needed)": "comments",
     "new bod": "new_bod",
